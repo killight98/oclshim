@@ -70,8 +70,13 @@ const char* CLIntercept::sc_DumpDirectoryName = "CLIntercept_Dump";
 const char* CLIntercept::sc_ReportFileName = "clintercept_report.txt";
 const char* CLIntercept::sc_LogFileName = "clintercept_log.txt";
 const char* CLIntercept::sc_DumpPerfCountersFileNamePrefix = "clintercept_perfcounter";
-const char* CLIntercept::sc_TraceFileName = "clintercept_trace.json";
+const char* CLIntercept::sc_ChromeTraceFileName = "clintercept_trace.json";
+const char* CLIntercept::sc_CsvTraceFileName = "oclshim_%" PRIu64 ".csv";
 
+// "category" destinguishs device or host api call
+// "hwInfo" describes kernel function details, which is json format
+// "correlationId" shows relationship between device and host api call
+const char* CLIntercept::sc_CsvHeader = "name,startTime(us),endTime(us),processId,threadId,category,hwInfo,correlationId\n";
 ///////////////////////////////////////////////////////////////////////////////
 //
 bool CLIntercept::Create( void* pGlobalData, CLIntercept*& pIntercept )
@@ -242,7 +247,8 @@ CLIntercept::~CLIntercept()
     log( "... shutdown complete.\n" );
 
     m_InterceptLog.close();
-    m_InterceptTrace.close();
+    m_InterceptChromeTrace.close();
+    m_InterceptCsvTrace.close();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -392,25 +398,44 @@ bool CLIntercept::init()
 
         OS().GetDumpDirectoryName( sc_DumpDirectoryName, fileName );
         fileName += "/";
-        fileName += sc_TraceFileName;
+        fileName += sc_ChromeTraceFileName;
 
         OS().MakeDumpDirectories( fileName );
-        m_InterceptTrace.open(
+        m_InterceptChromeTrace.open(
             fileName.c_str(),
             std::ios::out | std::ios::binary );
-        m_InterceptTrace << "[\n";
+        m_InterceptChromeTrace << "[\n";
 
         uint64_t    threadId = OS().GetThreadID();
         std::string processName = OS().GetProcessName();
-        m_InterceptTrace
+        m_InterceptChromeTrace
             << "{\"ph\":\"M\", \"name\":\"process_name\", \"pid\":" << m_ProcessId
             << ", \"tid\":" << threadId
             << ", \"args\":{\"name\":\"" << processName
             << "\"}},\n";
-        //m_InterceptTrace
+        //m_InterceptChromeTrace
         //    << "{\"ph\":\"M\", \"name\":\"thread_name\", \"pid\":" << processId
         //    << ", \"tid\":" << threadId
         //    << ", \"args\":{\"name\":\"Host APIs\"}},\n";
+    }
+
+    if ( m_Config.CsvPerformanceTracing )
+    {
+        std::string fileName = "";
+        uint64_t    threadId = OS().GetThreadID();
+        std::string applicationName = OS().GetProcessName();
+
+        OS().GetDumpDirectoryName( sc_DumpDirectoryName, fileName );
+        fileName += "/";
+        sprintf(m_StringBuffer, sc_CsvTraceFileName, m_ProcessId, threadId );
+        fileName += m_StringBuffer;
+
+        OS().MakeDumpDirectories( fileName );
+        m_InterceptCsvTrace.open(
+            fileName.c_str(),
+            std::ios::out | std::ios::binary );
+
+        m_InterceptCsvTrace << sc_CsvHeader;
     }
 
     std::string name = "";
@@ -593,7 +618,7 @@ bool CLIntercept::init()
         using us = std::chrono::microseconds;
         uint64_t    usStartTime =
             std::chrono::duration_cast<us>(m_StartTime.time_since_epoch()).count();
-        m_InterceptTrace
+        m_InterceptChromeTrace
             << "{\"ph\":\"M\", \"name\":\"clintercept_start_time\", \"pid\":" << m_ProcessId
             << ", \"tid\":" << threadId
             << ", \"args\":{\"start_time\":" << usStartTime
@@ -5194,7 +5219,8 @@ void CLIntercept::getTimingTagsMap(
     const cl_map_flags flags,
     const cl_bool blocking,
     std::string& hostTag,
-    std::string& deviceTag )
+    std::string& deviceTag,
+    std::string& deivceArg )
 {
     // Note: we do not currently need a lock for this function.
 
@@ -5222,6 +5248,9 @@ void CLIntercept::getTimingTagsMap(
     deviceTag += hostTag;
     deviceTag += " )";
 
+    deivceArg.reserve(128);
+    deivceArg = hostTag;
+
     if( blocking == CL_TRUE )
     {
         if( !hostTag.empty() )
@@ -5239,7 +5268,8 @@ void CLIntercept::getTimingTagsMemfill(
     const cl_command_queue queue,
     const void* dst,
     std::string& hostTag,
-    std::string& deviceTag )
+    std::string& deviceTag,
+    std::string& deivceArg )
 {
     std::lock_guard<std::mutex> lock(m_Mutex);
 
@@ -5290,6 +5320,9 @@ void CLIntercept::getTimingTagsMemfill(
             deviceTag += "( ";
             deviceTag += hostTag;
             deviceTag += " )";
+
+            deivceArg.reserve(128);
+            deivceArg = hostTag;
         }
     }
 }
@@ -5303,7 +5336,8 @@ void CLIntercept::getTimingTagsMemcpy(
     const void* dst,
     const void* src,
     std::string& hostTag,
-    std::string& deviceTag )
+    std::string& deviceTag,
+    std::string& deviceArg )
 {
     std::lock_guard<std::mutex> lock(m_Mutex);
 
@@ -5369,6 +5403,9 @@ void CLIntercept::getTimingTagsMemcpy(
             deviceTag += "( ";
             deviceTag += hostTag;
             deviceTag += " )";
+
+            deviceArg.reserve(128);
+            deviceArg = hostTag;
         }
     }
 
@@ -5392,7 +5429,9 @@ void CLIntercept::getTimingTagsKernel(
     const size_t* gws,
     const size_t* lws,
     std::string& hostTag,
-    std::string& deviceTag )
+    std::string& deviceTag,
+    std::string& traceName,
+    std::string& deviceArg )
 {
     std::lock_guard<std::mutex> lock(m_Mutex);
 
@@ -5411,6 +5450,8 @@ void CLIntercept::getTimingTagsKernel(
     if( kernel )
     {
         hostTag += getShortKernelNameWithHash(kernel);
+
+        traceName = hostTag;
 
         deviceTag += hostTag;
 
@@ -5512,7 +5553,10 @@ void CLIntercept::getTimingTagsKernel(
 
                 if( simd )
                 {
-                    ss << " SIMD" << simd;
+                    ss << " SIMD=" << simd;
+                    deviceArg += deviceArg == "" ?
+                        "\"\"SIMD\"\":\"\"" + std::to_string(simd) + "\"\"" :
+                        ",\"\"SIMD\"\":\"\"" + std::to_string(simd) + "\"\"";
                 }
             }
             {
@@ -5527,6 +5571,9 @@ void CLIntercept::getTimingTagsKernel(
                 if( slm )
                 {
                     ss << " SLM=" << slm;
+                    deviceArg += deviceArg == "" ?
+                        "\"\"SLM\"\":\"\"" + std::to_string(slm) + "\"\"" :
+                        ",\"\"SLM\"\":\"\"" + std::to_string(slm) + "\"\"";
                 }
             }
             {
@@ -5541,6 +5588,9 @@ void CLIntercept::getTimingTagsKernel(
                 if( tpm )
                 {
                     ss << " TPM=" << tpm;
+                    deviceArg += deviceArg == "" ?
+                        "\"\"TPM\"\":\"\"" + std::to_string(tpm) + "\"\"" :
+                        ",\"\"TPM\"\":\"\"" + std::to_string(tpm) + "\"\"";
                 }
             }
             {
@@ -5555,6 +5605,9 @@ void CLIntercept::getTimingTagsKernel(
                 if( spill )
                 {
                     ss << " SPILL=" << spill;
+                    deviceArg += deviceArg == "" ?
+                        "\"\"SPILL\"\":\"\"" + std::to_string(spill) + "\"\"" :
+                        ",\"\"SPILL\"\":\"\"" + std::to_string(spill) + "\"\"";
                 }
             }
             deviceTag += ss.str();
@@ -5563,47 +5616,54 @@ void CLIntercept::getTimingTagsKernel(
         if( config().DevicePerformanceTimeGWOTracking )
         {
             std::ostringstream  ss;
-            ss << " GWO[ ";
+            ss << " GWO=";
+            deviceArg += deviceArg == "" ? "\"\"GWO\"\":" : ",\"\"GWO\"\":";
             if( gwo )
             {
                 if( workDim >= 1 )
                 {
                     ss << gwo[0];
+                    deviceArg += "\"\"" + std::to_string(gwo[0]) + "\"\"";
                 }
                 if( workDim >= 2 )
                 {
                     ss << ", " << gwo[1];
+                    deviceArg += " \"\"" + std::to_string(gwo[1]) + "\"\"";
                 }
                 if( workDim >= 3 )
                 {
                     ss << ", " << gwo[2];
+                    deviceArg += " \"\"" + std::to_string(gwo[2]) + "\"\"";
                 }
             }
             else
             {
                 ss << "NULL";
+                deviceArg += "\"\"NULL\"\"";
             }
-            ss << " ]";
             deviceTag += ss.str();
         }
 
         if( config().DevicePerformanceTimeGWSTracking && gws )
         {
             std::ostringstream  ss;
-            ss << " GWS[ ";
+            ss << " GWS=";
+            deviceArg += deviceArg == "" ? "\"\"GWS\"\":" : ",\"\"GWS\"\":";
             if( workDim >= 1 )
             {
                 ss << gws[0];
+                deviceArg += "\"\"" + std::to_string(gws[0]) + "\"\"";
             }
             if( workDim >= 2 )
             {
                 ss << " x " << gws[1];
+                deviceArg += " x \"\"" + std::to_string(gws[1]) + "\"\"";
             }
             if( workDim >= 3 )
             {
                 ss << " x " << gws[2];
+                deviceArg += " x \"\"" + std::to_string(gws[2]) + "\"\"";
             }
-            ss << " ]";
             deviceTag += ss.str();
         }
 
@@ -5671,12 +5731,14 @@ void CLIntercept::getTimingTagsKernel(
             std::ostringstream  ss;
             if( useSuggestedLWS )
             {
-                ss << " SLWS[ ";
+                ss << " SLWS=";
+                deviceArg += deviceArg == "" ? "\"\"SLWS\"\":" : ",\"\"SLWS\"\":";
                 lws = suggestedLWS;
             }
             else
             {
-                ss << " LWS[ ";
+                ss << " LWS=";
+                deviceArg += deviceArg == "" ? "\"\"LWS\"\":" : ",\"\"LWS\"\":";
             }
 
             if( lws )
@@ -5684,23 +5746,27 @@ void CLIntercept::getTimingTagsKernel(
                 if( workDim >= 1 )
                 {
                     ss << lws[0];
+                    deviceArg += "\"\"" + std::to_string(lws[0]) + "\"\"";
                 }
                 if( workDim >= 2 )
                 {
                     ss << " x " << lws[1];
+                    deviceArg += "\"\"" + std::to_string(lws[1]) + "\"\"";
                 }
                 if( workDim >= 3 )
                 {
                     ss << " x " << lws[2];
+                    deviceArg += "\"\"" + std::to_string(lws[2]) + "\"\"";
                 }
             }
             else
             {
                 ss << "NULL";
+                deviceArg += "\"\"NULL\"\"";
             }
 
-            ss << " ]";
             deviceTag += ss.str();
+            if ( deviceArg != "" ) deviceArg = "\"{" + deviceArg + "}\"";
         }
     }
 }
@@ -5759,6 +5825,7 @@ void CLIntercept::modifyCommandQueueProperties(
     if( config().DevicePerformanceTiming ||
         config().ITTPerformanceTiming ||
         config().ChromePerformanceTiming ||
+        config().CsvPerformanceTracing ||
         config().DevicePerfCounterEventBasedSampling )
     {
         props |= (cl_command_queue_properties)CL_QUEUE_PROFILING_ENABLE;
@@ -6002,6 +6069,8 @@ void CLIntercept::addTimingEvent(
     const uint64_t enqueueCounter,
     const clock::time_point queuedTime,
     const std::string& tag,
+    const std::string& traceName,
+    const std::string& arg,
     const cl_command_queue queue,
     cl_event event )
 {
@@ -6035,6 +6104,9 @@ void CLIntercept::addTimingEvent(
     node.Device = device;
     node.QueueNumber = m_QueueNumberMap[ queue ];
     node.Name = !tag.empty() ? tag : functionName;
+    // have traceName means kernel function
+    node.TraceName = !traceName.empty() ? traceName : functionName;
+    node.Arg = !traceName.empty() ? arg : "";
     node.EnqueueCounter = enqueueCounter;
     node.QueuedTime = queuedTime;
     node.UseProfilingDelta = false;
@@ -6123,7 +6195,8 @@ void CLIntercept::checkTimingEvents()
             {
                 if( config().DevicePerformanceTiming ||
                     config().ITTPerformanceTiming ||
-                    config().ChromePerformanceTiming )
+                    config().ChromePerformanceTiming ||
+                    config().CsvPerformanceTracing )
                 {
                     cl_ulong    commandQueued = 0;
                     cl_ulong    commandSubmit = 0;
@@ -6228,6 +6301,25 @@ void CLIntercept::checkTimingEvents()
                                 node.QueuedTime,
                                 commandQueued,
                                 commandSubmit,
+                                commandStart,
+                                commandEnd );
+                        }
+
+                        if ( config().CsvPerformanceTracing )
+                        {
+                            bool useProfilingDelta =
+                                node.UseProfilingDelta &&
+                                !config().ChromePerformanceTimingEstimateQueuedTime;
+
+                            csvTraceEvent(
+                                node.TraceName,
+                                node.Arg,
+                                useProfilingDelta,
+                                node.ProfilingDeltaNS,
+                                node.EnqueueCounter,
+                                node.QueueNumber,
+                                node.QueuedTime,
+                                commandQueued,
                                 commandStart,
                                 commandEnd );
                         }
@@ -13085,7 +13177,7 @@ void CLIntercept::chromeCallLoggingExit(
             usStart,
             usDelta,
             enqueueCounter );
-        m_InterceptTrace.write(m_StringBuffer, size);
+        m_InterceptChromeTrace.write(m_StringBuffer, size);
     }
     else if( !tag.empty() )
     {
@@ -13098,7 +13190,7 @@ void CLIntercept::chromeCallLoggingExit(
             tag.c_str(),
             usStart,
             usDelta );
-        m_InterceptTrace.write(m_StringBuffer, size);
+        m_InterceptChromeTrace.write(m_StringBuffer, size);
     }
     else if( includeId )
     {
@@ -13111,7 +13203,7 @@ void CLIntercept::chromeCallLoggingExit(
             usStart,
             usDelta,
             enqueueCounter );
-        m_InterceptTrace.write(m_StringBuffer, size);
+        m_InterceptChromeTrace.write(m_StringBuffer, size);
     }
     else
     {
@@ -13123,7 +13215,7 @@ void CLIntercept::chromeCallLoggingExit(
             functionName,
             usStart,
             usDelta );
-        m_InterceptTrace.write(m_StringBuffer, size);
+        m_InterceptChromeTrace.write(m_StringBuffer, size);
     }
 }
 
@@ -13218,16 +13310,19 @@ void CLIntercept::chromeRegisterCommandQueue(
             }
         }
 
-        m_InterceptTrace
+        if ( config().ChromePerformanceTiming )
+        {
+        m_InterceptChromeTrace
             << "{\"ph\":\"M\", \"name\":\"thread_name\", \"pid\":" << m_ProcessId
             << ", \"tid\":-" << queueNumber
             << ", \"args\":{\"name\":\"" << trackName
             << "\"}},\n";
-        m_InterceptTrace
+        m_InterceptChromeTrace
             << "{\"ph\":\"M\", \"name\":\"thread_sort_index\", \"pid\":" << m_ProcessId
             << ", \"tid\":-" << queueNumber
             << ", \"args\":{\"sort_index\":\"" << queueNumber
             << "\"}},\n";
+        }
     }
 }
 
@@ -13321,7 +13416,7 @@ void CLIntercept::chromeTraceEvent(
                     usDeltas[state],
                     colours[state].c_str(),
                     enqueueCounter );
-                m_InterceptTrace.write(m_StringBuffer, size);
+                m_InterceptChromeTrace.write(m_StringBuffer, size);
             }
             else
             {
@@ -13337,7 +13432,7 @@ void CLIntercept::chromeTraceEvent(
                     usDeltas[state],
                     colours[state].c_str(),
                     enqueueCounter );
-                m_InterceptTrace.write(m_StringBuffer, size);
+                m_InterceptChromeTrace.write(m_StringBuffer, size);
             }
         }
         m_EventsChromeTraced++;
@@ -13358,7 +13453,7 @@ void CLIntercept::chromeTraceEvent(
                 usStart,
                 usDelta,
                 enqueueCounter );
-            m_InterceptTrace.write(m_StringBuffer, size);
+            m_InterceptChromeTrace.write(m_StringBuffer, size);
         }
         else
         {
@@ -13371,9 +13466,90 @@ void CLIntercept::chromeTraceEvent(
                 usStart,
                 usDelta,
                 enqueueCounter );
-            m_InterceptTrace.write(m_StringBuffer, size);
+            m_InterceptChromeTrace.write(m_StringBuffer, size);
         }
     }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// collect device api call metric into csv file
+void CLIntercept::csvTraceEvent(
+    const std::string& name,
+    const std::string& arg,
+    bool useProfilingDelta,
+    int64_t profilingDeltaNS,
+    uint64_t enqueueCounter,
+    unsigned int queueNumber,
+    clock::time_point queuedTime,
+    cl_ulong commandQueued,
+    cl_ulong commandStart,
+    cl_ulong commandEnd )
+{
+    uint64_t threadId = OS().GetThreadID();
+    std::string correlationId = std::to_string(enqueueCounter);
+
+    using ns = std::chrono::nanoseconds;
+    const uint64_t  startTimeNS =
+        std::chrono::duration_cast<ns>(m_StartTime.time_since_epoch()).count();
+    const uint64_t  estimatedQueuedTimeNS =
+        std::chrono::duration_cast<ns>(queuedTime.time_since_epoch()).count();
+    const uint64_t  profilingQueuedTimeNS =
+        commandQueued + profilingDeltaNS;
+
+    // Use the profiling queued time directly if the profiling delta is
+    // valid and if it is within a threshold of the measured queued time.
+    // The threshold is to work around buggy device and host timers.
+    const uint64_t  threshold = 1000000000;   // 1s
+    const uint64_t  normalizedQueuedTimeNS =
+        useProfilingDelta &&
+        profilingQueuedTimeNS >= estimatedQueuedTimeNS &&
+        profilingQueuedTimeNS - estimatedQueuedTimeNS < threshold ?
+        profilingQueuedTimeNS - startTimeNS:
+        estimatedQueuedTimeNS - startTimeNS;
+    const uint64_t  usStart =
+        (commandStart - commandQueued + normalizedQueuedTimeNS) / 1000;
+    const uint64_t  usDur = ( commandEnd - commandStart ) / 1000;
+    using us = std::chrono::microseconds;
+    const uint64_t  startTimeUS =
+        std::chrono::duration_cast<us>(m_StartTime.time_since_epoch()).count();
+
+    m_InterceptCsvTrace
+        << name << "," << usStart + startTimeUS << "," << usDur << ","
+        << m_ProcessId << "," << threadId << ","
+        << std::to_string(CLIntercept::API_CATEGORY::DEVICE) << "," << arg
+        << "," << correlationId << "\n";
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// collect host api call metric into csv file
+void CLIntercept::csvCallLoggingExit(
+    const std::string& name,
+    const std::string& tag,
+    bool includeId,
+    uint64_t enqueueCounter,
+    clock::time_point tickStart,
+    clock::time_point tickEnd )
+{
+    std::lock_guard<std::mutex> lock(m_Mutex);
+
+    uint64_t threadId = OS().GetThreadID();
+    std::string funcName;
+    std::string correlationId;
+
+    using us = std::chrono::microseconds;
+    const uint64_t startTime =
+        std::chrono::duration_cast<us>(tickStart.time_since_epoch()).count();
+    const uint64_t endTime =
+        std::chrono::duration_cast<us>(tickEnd.time_since_epoch()).count();
+
+    funcName = !tag.empty() ? name + "( " + tag + " )" : name;
+    correlationId = includeId ? std::to_string(enqueueCounter) : "";
+
+    m_InterceptCsvTrace
+        << funcName << "," << startTime << "," << endTime - startTime << ","
+        << m_ProcessId << "," << threadId << ","
+        << std::to_string(CLIntercept::API_CATEGORY::HOST) << ",,"
+        << correlationId << "\n";
 }
 
 ///////////////////////////////////////////////////////////////////////////////

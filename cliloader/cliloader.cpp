@@ -351,6 +351,13 @@ static bool parseArguments(int argc, char *argv[])
             SETENV("CLI_ContextCallbackLogging", "1");
             SETENV("CLI_ContextHintLevel", "7");    // GOOD, BAD, and NEUTRAL
         }
+        else if( !strcmp(argv[i], "--api-tracing") || !strcmp(argv[i], "-at"))
+        {
+            SETENV("CLI_CsvPerformanceTracing", "1");
+            SETENV("CLI_DevicePerformanceTimeKernelInfoTracking", "1");
+            SETENV("CLI_DevicePerformanceTimeGWSTracking", "1");
+            SETENV("CLI_DevicePerformanceTimeLWSTracking", "1");
+        }
         else if( !strcmp(argv[i], "--mdapi-ebs") )
         {
             SETENV("CLI_DevicePerfCounterCustom", "ComputeBasic");
@@ -435,6 +442,7 @@ static bool parseArguments(int argc, char *argv[])
             "  --chrome-kernel-timeline [-ckt]  Record Per-Kernel Device Timeline to a JSON Trace File\n"
             "  --chrome-device-stages [-cds]    Record Device Timeline Stages to a JSON Trace File\n"
             "  --driver-diagnostics [-ddiag]    Log Driver Diagnostics\n"
+            "  --api-tracing [-at]              Record Both Device and HOST API Calls to a CSV Trace File\n"
             "  --mdapi-ebs                      Report Event-Based MDAPI Counters (Intel GPU Only)\n"
             "  --mdapi-tbs                      Report Time-Based MDAPI Counters (Intel GPU Only)\n"
             "  --host-timing [-h]               Report Host API Execution Time\n"
