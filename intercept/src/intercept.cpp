@@ -76,7 +76,7 @@ const char* CLIntercept::sc_CsvTraceFileName = "oclshim_%" PRIu64 ".csv";
 // "category" destinguishs device or host api call
 // "hwInfo" describes kernel function details, which is json format
 // "correlationId" shows relationship between device and host api call
-const char* CLIntercept::sc_CsvHeader = "name,startTime(us),endTime(us),processId,threadId,category,hwInfo,correlationId\n";
+const char* CLIntercept::sc_CsvHeader = "name,startTime(us),duration(us),threadId,category,hwInfo,correlationId\n";
 ///////////////////////////////////////////////////////////////////////////////
 //
 bool CLIntercept::Create( void* pGlobalData, CLIntercept*& pIntercept )
@@ -13515,7 +13515,7 @@ void CLIntercept::csvTraceEvent(
 
     m_InterceptCsvTrace
         << name << "," << usStart + startTimeUS << "," << usDur << ","
-        << m_ProcessId << "," << threadId << ","
+        << threadId << ","
         << std::to_string(CLIntercept::API_CATEGORY::DEVICE) << "," << arg
         << "," << correlationId << "\n";
 }
@@ -13547,7 +13547,7 @@ void CLIntercept::csvCallLoggingExit(
 
     m_InterceptCsvTrace
         << funcName << "," << startTime << "," << endTime - startTime << ","
-        << m_ProcessId << "," << threadId << ","
+        << threadId << ","
         << std::to_string(CLIntercept::API_CATEGORY::HOST) << ",,"
         << correlationId << "\n";
 }
