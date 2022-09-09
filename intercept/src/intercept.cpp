@@ -425,8 +425,9 @@ bool CLIntercept::init()
         std::string fileName = "";
         std::string applicationName = OS().GetProcessName();
 
-        OS().GetDumpDirectoryName( sc_DumpDirectoryName, fileName );
-        fileName += "/";
+        // Save csv files at current diretory.
+        // OS().GetDumpDirectoryName( sc_DumpDirectoryName, fileName );
+        // fileName += "/";
         sprintf(m_StringBuffer, sc_CsvTraceFileName, m_ProcessId );
         fileName += m_StringBuffer;
 
