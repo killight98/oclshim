@@ -70,7 +70,7 @@ const char* CLIntercept::sc_DumpDirectoryName = "CLIntercept_Dump";
 const char* CLIntercept::sc_ReportFileName = "clintercept_report.txt";
 const char* CLIntercept::sc_LogFileName = "clintercept_log.txt";
 const char* CLIntercept::sc_DumpPerfCountersFileNamePrefix = "clintercept_perfcounter";
-const char* CLIntercept::sc_ChromeTraceFileName = "clintercept_trace.json";
+const char* CLIntercept::sc_ChromeTraceFileName = "clintercept_trace_%" PRIu64 ".json";
 const char* CLIntercept::sc_CsvTraceFileName = "oclshim_%" PRIu64 ".csv";
 
 // "category" destinguishs device or host api call
@@ -398,7 +398,8 @@ bool CLIntercept::init()
 
         OS().GetDumpDirectoryName( sc_DumpDirectoryName, fileName );
         fileName += "/";
-        fileName += sc_ChromeTraceFileName;
+        sprintf(m_StringBuffer, sc_ChromeTraceFileName, m_ProcessId);
+        fileName += m_StringBuffer;
 
         OS().MakeDumpDirectories( fileName );
         m_InterceptChromeTrace.open(
@@ -422,12 +423,11 @@ bool CLIntercept::init()
     if ( m_Config.CsvPerformanceTracing )
     {
         std::string fileName = "";
-        uint64_t    threadId = OS().GetThreadID();
         std::string applicationName = OS().GetProcessName();
 
         OS().GetDumpDirectoryName( sc_DumpDirectoryName, fileName );
         fileName += "/";
-        sprintf(m_StringBuffer, sc_CsvTraceFileName, m_ProcessId, threadId );
+        sprintf(m_StringBuffer, sc_CsvTraceFileName, m_ProcessId );
         fileName += m_StringBuffer;
 
         OS().MakeDumpDirectories( fileName );
@@ -5204,11 +5204,13 @@ void CLIntercept::dumpProgramBuildLog(
 //
 void CLIntercept::getTimingTagBlocking(
     const cl_bool blocking,
-    std::string& str )
+    std::string& hostTag,
+    std::string& hostArg )
 {
     if( blocking == CL_TRUE )
     {
-        str += "blocking";
+        hostTag += "blocking";
+        hostArg += "\"{\"\"MODE\"\":\"\"blocking\"\"}\"";
     }
 }
 
@@ -5219,6 +5221,7 @@ void CLIntercept::getTimingTagsMap(
     const cl_map_flags flags,
     const cl_bool blocking,
     std::string& hostTag,
+    std::string& hostArg,
     std::string& deviceTag,
     std::string& deivceArg )
 {
@@ -5242,6 +5245,8 @@ void CLIntercept::getTimingTagsMap(
         hostTag += "?";
     }
 
+    if ( !hostTag.empty() ) hostArg += "\"{\"\"FLAG\"\":\"\"" + hostTag + "\"\"";
+
     deviceTag.reserve(128);
     deviceTag = functionName;
     deviceTag += "( ";
@@ -5256,9 +5261,12 @@ void CLIntercept::getTimingTagsMap(
         if( !hostTag.empty() )
         {
             hostTag += ", ";
+            hostArg += ", ";
         }
         hostTag += "blocking";
+        hostArg += "\"\"MODE\"\":\"\"blocking\"\"";
     }
+    if ( !hostArg.empty() ) hostArg += "}\"";
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -5268,6 +5276,7 @@ void CLIntercept::getTimingTagsMemfill(
     const cl_command_queue queue,
     const void* dst,
     std::string& hostTag,
+    std::string& hostArg,
     std::string& deviceTag,
     std::string& deivceArg )
 {
@@ -5315,6 +5324,8 @@ void CLIntercept::getTimingTagsMemfill(
             default:                        hostTag += "M"; break;
             }
 
+            hostArg = "\"{\"MemType\":\"" + hostTag + "\"}\"";
+
             deviceTag.reserve(128);
             deviceTag = functionName;
             deviceTag += "( ";
@@ -5336,6 +5347,7 @@ void CLIntercept::getTimingTagsMemcpy(
     const void* dst,
     const void* src,
     std::string& hostTag,
+    std::string& hostArg,
     std::string& deviceTag,
     std::string& deviceArg )
 {
@@ -5398,6 +5410,8 @@ void CLIntercept::getTimingTagsMemcpy(
             default:                        hostTag += "M"; break;
             }
 
+            hostArg = "\"{\"\"CopyType\"\":\"\"" + hostTag;
+
             deviceTag.reserve(128);
             deviceTag = functionName;
             deviceTag += "( ";
@@ -5414,9 +5428,12 @@ void CLIntercept::getTimingTagsMemcpy(
         if( !hostTag.empty() )
         {
             hostTag += ", ";
+            hostArg += ", ";
         }
         hostTag += "blocking";
+        hostArg += "\"\"MODE\"\":\"\"blocking\"\"";
     }
+    if ( !hostArg.empty() ) hostArg += "}\"";
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -13524,7 +13541,7 @@ void CLIntercept::csvTraceEvent(
 // collect host api call metric into csv file
 void CLIntercept::csvCallLoggingExit(
     const std::string& name,
-    const std::string& tag,
+    const std::string& arg,
     bool includeId,
     uint64_t enqueueCounter,
     clock::time_point tickStart,
@@ -13533,7 +13550,7 @@ void CLIntercept::csvCallLoggingExit(
     std::lock_guard<std::mutex> lock(m_Mutex);
 
     uint64_t threadId = OS().GetThreadID();
-    std::string funcName;
+    std::string hwInfo;
     std::string correlationId;
 
     using us = std::chrono::microseconds;
@@ -13542,14 +13559,13 @@ void CLIntercept::csvCallLoggingExit(
     const uint64_t endTime =
         std::chrono::duration_cast<us>(tickEnd.time_since_epoch()).count();
 
-    funcName = !tag.empty() ? name + "( " + tag + " )" : name;
+    hwInfo = name == "clEnqueueNDRangeKernel" ? "" : arg;
     correlationId = includeId ? std::to_string(enqueueCounter) : "";
 
     m_InterceptCsvTrace
-        << funcName << "," << startTime << "," << endTime - startTime << ","
-        << threadId << ","
-        << std::to_string(CLIntercept::API_CATEGORY::HOST) << ",,"
-        << correlationId << "\n";
+        << name << "," << startTime << "," << endTime - startTime << ","
+        << threadId << "," << std::to_string(CLIntercept::API_CATEGORY::HOST)
+        << "," << hwInfo << "," << correlationId << "\n";
 }
 
 ///////////////////////////////////////////////////////////////////////////////
