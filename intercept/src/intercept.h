@@ -1932,8 +1932,7 @@ inline CObjectTracker& CLIntercept::objectTracker()
             event,                                                          \
             ##__VA_ARGS__ );                                                \
     }                                                                       \
-    if( pIntercept->config().ChromeCallLogging ||                           \
-        pIntercept->config().CsvPerformanceTracing )                        \
+    if( pIntercept->config().ChromeCallLogging )                            \
     {                                                                       \
         pIntercept->chromeCallLoggingExit(                                  \
             __FUNCTION__,                                                   \
@@ -1942,6 +1941,9 @@ inline CObjectTracker& CLIntercept::objectTracker()
             enqueueCounter,                                                 \
             cpuStart,                                                       \
             cpuEnd );                                                       \
+    }                                                                       \
+    if ( pIntercept->config().CsvPerformanceTracing )                       \
+    {                                                                       \
         pIntercept->csvCallLoggingExit(                                     \
             __FUNCTION__,                                                   \
             "",                                                             \
