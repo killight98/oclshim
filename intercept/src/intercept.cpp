@@ -74,9 +74,9 @@ const char* CLIntercept::sc_ChromeTraceFileName = "clintercept_trace_%" PRIu64 "
 const char* CLIntercept::sc_CsvTraceFileName = "oclshim_%" PRIu64 ".csv";
 
 // "category" destinguishs device or host api call
-// "hwInfo" describes kernel function details, which is json format
+// "info" describes host/kernel function details, which is json format
 // "correlationId" shows relationship between device and host api call
-const char* CLIntercept::sc_CsvHeader = "name,startTime(us),duration(us),threadId,category,hwInfo,correlationId\n";
+const char* CLIntercept::sc_CsvHeader = "name,startTime(us),duration(us),deviceId,threadId,category,info,correlationId\n";
 ///////////////////////////////////////////////////////////////////////////////
 //
 bool CLIntercept::Create( void* pGlobalData, CLIntercept*& pIntercept )
@@ -5262,7 +5262,7 @@ void CLIntercept::getTimingTagsMap(
         if( !hostTag.empty() )
         {
             hostTag += ", ";
-            hostArg += ", ";
+            hostArg += ",";
         }
         hostTag += "blocking";
         hostArg += "\"\"MODE\"\":\"\"blocking\"\"";
@@ -5325,7 +5325,7 @@ void CLIntercept::getTimingTagsMemfill(
             default:                        hostTag += "M"; break;
             }
 
-            hostArg = "\"{\"MemType\":\"" + hostTag + "\"}\"";
+            hostArg = "\"{\"\"MemType\"\":\"\"" + hostTag + "\"\"}\"";
 
             deviceTag.reserve(128);
             deviceTag = functionName;
@@ -5411,7 +5411,7 @@ void CLIntercept::getTimingTagsMemcpy(
             default:                        hostTag += "M"; break;
             }
 
-            hostArg = "\"{\"\"CopyType\"\":\"\"" + hostTag;
+            hostArg = "\"{\"\"CopyType\"\":\"\"" + hostTag + "\"\"";
 
             deviceTag.reserve(128);
             deviceTag = functionName;
@@ -5429,7 +5429,7 @@ void CLIntercept::getTimingTagsMemcpy(
         if( !hostTag.empty() )
         {
             hostTag += ", ";
-            hostArg += ", ";
+            hostArg += ",";
         }
         hostTag += "blocking";
         hostArg += "\"\"MODE\"\":\"\"blocking\"\"";
@@ -5638,21 +5638,23 @@ void CLIntercept::getTimingTagsKernel(
             deviceArg += deviceArg == "" ? "\"\"GWO\"\":" : ",\"\"GWO\"\":";
             if( gwo )
             {
+                std::string deviceArgTmp = "";
                 if( workDim >= 1 )
                 {
                     ss << gwo[0];
-                    deviceArg += "\"\"" + std::to_string(gwo[0]) + "\"\"";
+                    deviceArgTmp += std::to_string(gwo[0]);
                 }
                 if( workDim >= 2 )
                 {
                     ss << ", " << gwo[1];
-                    deviceArg += " \"\"" + std::to_string(gwo[1]) + "\"\"";
+                    deviceArgTmp += "," + std::to_string(gwo[1]);
                 }
                 if( workDim >= 3 )
                 {
                     ss << ", " << gwo[2];
-                    deviceArg += " \"\"" + std::to_string(gwo[2]) + "\"\"";
+                    deviceArgTmp += "," + std::to_string(gwo[2]);
                 }
+                if ( !deviceArgTmp.empty() ) deviceArg += "\"\"" + deviceArgTmp + "\"\"";
             }
             else
             {
@@ -5667,21 +5669,23 @@ void CLIntercept::getTimingTagsKernel(
             std::ostringstream  ss;
             ss << " GWS=";
             deviceArg += deviceArg == "" ? "\"\"GWS\"\":" : ",\"\"GWS\"\":";
+            std::string deviceArgTmp = "";
             if( workDim >= 1 )
             {
                 ss << gws[0];
-                deviceArg += "\"\"" + std::to_string(gws[0]) + "\"\"";
+                deviceArgTmp += std::to_string(gws[0]);
             }
             if( workDim >= 2 )
             {
                 ss << " x " << gws[1];
-                deviceArg += " x \"\"" + std::to_string(gws[1]) + "\"\"";
+                deviceArgTmp += "x" + std::to_string(gws[1]);
             }
             if( workDim >= 3 )
             {
                 ss << " x " << gws[2];
-                deviceArg += " x \"\"" + std::to_string(gws[2]) + "\"\"";
+                deviceArgTmp += "x" + std::to_string(gws[2]);
             }
+            if ( !deviceArgTmp.empty() ) deviceArg += "\"\"" + deviceArgTmp + "\"\"";
             deviceTag += ss.str();
         }
 
@@ -5761,21 +5765,23 @@ void CLIntercept::getTimingTagsKernel(
 
             if( lws )
             {
+                std::string deviceArgTmp = "";
                 if( workDim >= 1 )
                 {
                     ss << lws[0];
-                    deviceArg += "\"\"" + std::to_string(lws[0]) + "\"\"";
+                    deviceArgTmp += std::to_string(lws[0]);
                 }
                 if( workDim >= 2 )
                 {
                     ss << " x " << lws[1];
-                    deviceArg += "\"\"" + std::to_string(lws[1]) + "\"\"";
+                    deviceArgTmp += "x" + std::to_string(lws[1]);
                 }
                 if( workDim >= 3 )
                 {
                     ss << " x " << lws[2];
-                    deviceArg += "\"\"" + std::to_string(lws[2]) + "\"\"";
+                    deviceArgTmp += "x" + std::to_string(lws[2]);
                 }
+                if ( !deviceArgTmp.empty() ) deviceArg += "\"\"" + deviceArgTmp + "\"\"";
             }
             else
             {
@@ -6328,10 +6334,11 @@ void CLIntercept::checkTimingEvents()
                             bool useProfilingDelta =
                                 node.UseProfilingDelta &&
                                 !config().ChromePerformanceTimingEstimateQueuedTime;
-
+                            auto& deviceInfo = m_DeviceInfoMap[node.Device];
                             csvTraceEvent(
                                 node.TraceName,
                                 node.Arg,
+                                deviceInfo.DeviceIndex,
                                 useProfilingDelta,
                                 node.ProfilingDeltaNS,
                                 node.EnqueueCounter,
@@ -13494,6 +13501,7 @@ void CLIntercept::chromeTraceEvent(
 void CLIntercept::csvTraceEvent(
     const std::string& name,
     const std::string& arg,
+    const uint32_t deviceId,
     bool useProfilingDelta,
     int64_t profilingDeltaNS,
     uint64_t enqueueCounter,
@@ -13533,7 +13541,7 @@ void CLIntercept::csvTraceEvent(
 
     m_InterceptCsvTrace
         << name << "," << usStart + startTimeUS << "," << usDur << ","
-        << threadId << ","
+        << std::to_string(deviceId) << "," << threadId << ","
         << std::to_string(CLIntercept::API_CATEGORY::DEVICE) << "," << arg
         << "," << correlationId << "\n";
 }
@@ -13560,13 +13568,12 @@ void CLIntercept::csvCallLoggingExit(
     const uint64_t endTime =
         std::chrono::duration_cast<us>(tickEnd.time_since_epoch()).count();
 
-    hwInfo = name == "clEnqueueNDRangeKernel" ? "" : arg;
     correlationId = includeId ? std::to_string(enqueueCounter) : "";
 
     m_InterceptCsvTrace
-        << name << "," << startTime << "," << endTime - startTime << ","
+        << name << "," << startTime << "," << endTime - startTime << ",,"
         << threadId << "," << std::to_string(CLIntercept::API_CATEGORY::HOST)
-        << "," << hwInfo << "," << correlationId << "\n";
+        << "," << arg << "," << correlationId << "\n";
 }
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -866,6 +866,7 @@ public:
     void    csvTraceEvent(
                 const std::string& name,
                 const std::string& arg,
+                const uint32_t deviceId,
                 bool useProfilingDelta,
                 int64_t profilingDeltaNS,
                 uint64_t enqueueCounter,
