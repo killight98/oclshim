@@ -55,7 +55,7 @@ public:
     using clock = std::chrono::steady_clock;
 #endif
 
-    enum API_CATEGORY { DEVICE, HOST };
+    enum API_CATEGORY { DEVICE, HOST, DEVICE_INFO, };
 
     static bool Create( void* pGlobalData, CLIntercept*& pIntercept );
     static void Delete( CLIntercept*& pIntercept );

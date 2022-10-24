@@ -435,7 +435,7 @@ bool CLIntercept::init()
         m_InterceptCsvTrace.open(
             fileName.c_str(),
             std::ios::out | std::ios::binary );
-
+        m_InterceptCsvTrace << "hostname:" << m_OS.GetHostName() << ",cpu:" << m_OS.GetCpuInfo() << "\n";
         m_InterceptCsvTrace << sc_CsvHeader;
     }
 
@@ -1287,6 +1287,13 @@ void CLIntercept::cacheDeviceInfo(
         deviceInfo.Supports_cl_khr_subgroups =
             checkDeviceForExtension( device, "cl_khr_subgroups" );
 
+        // Save device info into csv file
+        if ( m_Config.CsvPerformanceTracing )
+        {
+            m_InterceptCsvTrace << "\"device\",,," << std::to_string(deviceInfo.DeviceIndex)
+                                << ",," << std::to_string(CLIntercept::API_CATEGORY::DEVICE_INFO)
+                                << ",\"" << deviceInfo.Name << "\",\n";
+        }
         delete [] deviceName;
     }
 }
