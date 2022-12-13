@@ -424,15 +424,14 @@ bool CLIntercept::init()
     if ( m_Config.CsvPerformanceTracing )
     {
         std::string fileName = "";
-        std::string applicationName = OS().GetProcessName();
 
         // Save csv files at current diretory.
         // OS().GetDumpDirectoryName( sc_DumpDirectoryName, fileName );
         // fileName += "/";
-        sprintf(m_StringBuffer, sc_CsvTraceFileName, m_ProcessId );
+        sprintf(m_StringBuffer, sc_CsvTraceFileName, m_ProcessId);
         fileName += m_StringBuffer;
 
-        OS().MakeDumpDirectories( fileName );
+        // OS().MakeDumpDirectories( fileName );
         m_InterceptCsvTrace.open(
             fileName.c_str(),
             std::ios::out | std::ios::binary );
@@ -771,6 +770,15 @@ void CLIntercept::report()
         {
             logf( "Failed to open report file for writing: %s\n", filepath );
         }
+    }
+
+    if( m_Config.CsvPerformanceTracing )
+    {
+        // re-generate file name
+        std::string fileName = "";
+        sprintf(m_StringBuffer, sc_CsvTraceFileName, m_ProcessId);
+        fileName += m_StringBuffer;
+        std::cerr << "[oclshim] report file: " << fileName << std::endl;
     }
 }
 
