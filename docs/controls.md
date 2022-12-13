@@ -227,6 +227,10 @@ If set to a nonzero value, the Intercept Layer for OpenCL Applications will chec
 
 If set to a nonzero value, logs information about the platforms and devices in the system on the first call to clGetPlatformIDs().
 
+##### `FlushFiles` (bool)
+
+If set to a nonzero value, the Intercept Layer for OpenCL Applications will flush files after ever write.  This slows down performance but can help to avoid truncated files if the Intercept Layer for OpenCL Applications does not exit cleanly.
+
 ##### `DumpDir` (string)
 
 If set, the Intercept Layer for OpenCL Applications will emit logs and dumps to this directory instead of the default directory.  The default log and dump directory is "%SYSTEMDRIVE%\\Intel\\CLIntercept\_Dump\\\<Process Name\>" on Windows and "~/CLIntercept\_Dump/\<Process Name\>" on other operating systems.  The log and dump directory must be writeable, otherwise the Intercept Layer for OpenCL Applications will not be able to create or modify log or dump files.
@@ -243,6 +247,10 @@ If set to a nonzero value, the Intercept Layer for OpenCL Applications will appe
 
 If an OpenCL application uses kernels with very long names, the Intercept Layer for OpenCL Applications can substitute a "short" kernel identifier for a "long" kernel name in logs and reports.  This control defines how long a kernel name must be (in characters) before it is replaced by a "short" kernel identifier.
 
+##### `DemangleKernelNames` (bool)
+
+If set to a nonzero value, the Intercept Layer for OpenCL Applications will track kernel names that are demangled according to C++ ABI rules.  This setting requires compiler support for demangling and may not be available in all configurations.
+
 ### Reporting Controls
 
 ##### `ReportToStderr` (bool)
@@ -252,6 +260,10 @@ If set to a nonzero value, the Intercept Layer for OpenCL Applications will emit
 ##### `ReportToFile` (bool)
 
 If set to a nonzero value, the Intercept Layer for OpenCL Applications will write results to the file "clintercept\_report.txt".
+
+##### `ReportInterval` (cl_uint)
+
+If set to a nonzero value, the Intercept Layer for OpenCL Applications will generate a report at regular intervals (based on the enqueue counter).  This can be useful to generate report data while a long-running application is executing, or if an application does not exit cleanly.
 
 ### Performance Timing Controls
 
@@ -286,6 +298,10 @@ If set to a nonzero value, the Intercept Layer for OpenCL Applications will dist
 ##### `DevicePerformanceTimeSuggestedLWSTracking` (bool)
 
 If set to a nonzero value, the Intercept Layer for OpenCL Applications will attempt to query and track the suggested local work size when the passed-in local work size is NULL.
+
+##### `DevicePerformanceTimeTransferTracking` (bool)
+
+If set to a nonzero value, the Intercept Layer for OpenCL Applications will distinguish between transfer operations of different sizes for the purpose of device performance timing.
 
 ##### `DevicePerformanceTimingSkipUnmap` (bool)
 
@@ -546,6 +562,14 @@ The Intercept Layer for OpenCL Applications will only dump image kernel argument
 
 The Intercept Layer for OpenCL Applications will only dump image kernel arguments when the enqueue counter is less than this value, inclusive.
 
+##### `DumpArgumentsOnSetMinEnqueue` (cl_uint)
+
+The Intercept Layer for OpenCL Applications will only dump argument values when the enqueue counter is greater than this value, inclusive.
+
+##### `DumpArgumentsOnSetMaxEnqueue` (cl_uint)
+
+The Intercept Layer for OpenCL Applications will only dump kernel arguments when the enqueue counter is less than this value, inclusive.
+
 ### Device Partitioning Controls
 
 ##### `AutoPartitionAllDevices` (bool)
@@ -572,7 +596,7 @@ If set to a nonzero value, the Intercept Layer for OpenCL Applications will try 
 
 ##### `AubCapture` (bool)
 
-This is the master control for aub capture.  The Intercept Layer for OpenCL Applications doesn't implement aub capture itself, but can be used to selectively enable and disable aub capture via other methods.
+This is the top-level control for aub capture.  The Intercept Layer for OpenCL Applications doesn't implement aub capture itself, but can be used to selectively enable and disable aub capture via other methods.
 
 ##### `AubCaptureKDC` (bool)
 

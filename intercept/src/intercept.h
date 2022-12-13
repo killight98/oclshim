@@ -33,7 +33,7 @@
 
 #if defined(_WIN32)
 
-#elif defined(__linux__) || defined(__APPLE__)
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
 
 #include <string.h>
 #define strcpy_s( _dst, _size, _src )   strncpy( _dst, _src, _size )
@@ -316,19 +316,22 @@ public:
                 const cl_program program,
                 const char* singleString );
     void    dumpProgramSource(
-                uint64_t hash,
                 const cl_program program,
+                uint64_t hash,
+                bool modified,
                 const char* singleString );
     void    dumpInputProgramBinaries(
-                uint64_t hash,
                 const cl_program program,
+                uint64_t hash,
+                bool modified,
                 cl_uint num_devices,
                 const cl_device_id* device_list,
                 const size_t* lengths,
                 const unsigned char** binaries );
     void    dumpProgramSPIRV(
-                uint64_t hash,
                 const cl_program program,
+                uint64_t hash,
+                bool modified,
                 const size_t length,
                 const void* il );
     void    dumpProgramOptionsScript(
@@ -336,6 +339,7 @@ public:
                 const char* options );
     void    dumpProgramOptions(
                 const cl_program program,
+                bool modified,
                 cl_bool isCompile,
                 cl_bool isLink,
                 const char* options );
@@ -364,13 +368,24 @@ public:
                 const char* options );
 
     void    getTimingTagBlocking(
+                const char* functionName,
                 const cl_bool blocking,
+                const size_t size,
                 std::string& hostTag,
-                std::string& hostArg );
+                std::string& hostArg,
+                std::string& deviceTag );
     void    getTimingTagsMap(
                 const char* functionName,
                 const cl_map_flags flags,
                 const cl_bool blocking,
+                const size_t size,
+                std::string& hostTag,
+                std::string& hostArg,
+                std::string& deviceTag,
+                std::string& deviceArg );
+    void    getTimingTagsUnmap(
+                const char* functionName,
+                const void* ptr,
                 std::string& hostTag,
                 std::string& hostArg,
                 std::string& deviceTag,
@@ -379,6 +394,7 @@ public:
                 const char* functionName,
                 const cl_command_queue queue,
                 const void* dst,
+                const size_t size,
                 std::string& hostTag,
                 std::string& hostArg,
                 std::string& deviceTag,
@@ -389,6 +405,7 @@ public:
                 const cl_bool blocking,
                 const void* dst,
                 const void* src,
+                const size_t size,
                 std::string& hostTag,
                 std::string& hostArg,
                 std::string& deviceTag,
@@ -490,6 +507,10 @@ public:
     void    checkRemoveCommandBufferInfo(
                 cl_command_buffer_khr cmdbuf );
 
+    void    addMutableCommandInfo(
+                cl_mutable_command_khr cmd,
+                cl_command_buffer_khr cmdbuf );
+
     void    addSamplerString(
                 cl_sampler sampler,
                 const std::string& str );
@@ -563,6 +584,13 @@ public:
                 void* ptr,
                 size_t offset,
                 size_t size );
+
+    void    addMapPointer(
+                const void* ptr,
+                const cl_map_flags flags,
+                const size_t size );
+    void    removeMapPointer(
+                const void* ptr );
 
     void    checkEventList(
                 const char* functionName,
@@ -766,6 +794,7 @@ public:
     const CLdispatchX&  dispatchX( cl_platform_id platform ) const;
     const CLdispatchX&  dispatchX( cl_semaphore_khr semaphore ) const;
     const CLdispatchX&  dispatchX( cl_command_buffer_khr cmdbuf ) const;
+    const CLdispatchX&  dispatchX( cl_mutable_command_khr cmd ) const;
 
     cl_platform_id  getPlatform( cl_accelerator_intel accelerator ) const;
     cl_platform_id  getPlatform( cl_command_queue queue ) const;
@@ -775,6 +804,7 @@ public:
     cl_platform_id  getPlatform( cl_mem memobj ) const;
     cl_platform_id  getPlatform( cl_semaphore_khr semaphore ) const;
     cl_platform_id  getPlatform( cl_command_buffer_khr cmdbuf ) const;
+    cl_platform_id  getPlatform( cl_mutable_command_khr cmd ) const;
 
     cl_uint getRefCount( cl_accelerator_intel accelerator );
     cl_uint getRefCount( cl_command_queue queue ) const;
@@ -953,7 +983,7 @@ private:
     void    logPlatformInfo( cl_platform_id platform );
     void    logDeviceInfo( cl_device_id device );
 
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || defined(__FreeBSD__)
     bool    initDispatch( const std::string& libName );
 #elif defined(__APPLE__)
     bool    initDispatch( void );
@@ -1210,6 +1240,15 @@ private:
     typedef std::map< cl_kernel, CKernelArgMemMap > CKernelArgMap;
     CKernelArgMap   m_KernelArgMap;
 
+    struct SMapPointerInfo
+    {
+        cl_map_flags    Flags;
+        size_t          Size;
+    };
+
+    typedef std::map< const void*, SMapPointerInfo >    CMapPointerInfoMap;
+    CMapPointerInfoMap  m_MapPointerInfoMap;
+
     bool    m_AubCaptureStarted;
     cl_uint m_AubCaptureKernelEnqueueSkipCounter;
     cl_uint m_AubCaptureKernelEnqueueCaptureCounter;
@@ -1255,6 +1294,13 @@ private:
 
     typedef std::map< cl_command_buffer_khr, cl_platform_id >   CCommandBufferInfoMap;
     CCommandBufferInfoMap   m_CommandBufferInfoMap;
+
+    typedef std::map< cl_mutable_command_khr, cl_platform_id >  CMutableCommandInfoMap;
+    CMutableCommandInfoMap  m_MutableCommandInfoMap;
+
+    typedef std::list< cl_mutable_command_khr > CMutableCommandList;
+    typedef std::map< cl_command_buffer_khr, CMutableCommandList >  CCommandBufferMutableCommandsMap;
+    CCommandBufferMutableCommandsMap    m_CommandBufferMutableCommandsMap;
 
     struct Config
     {
@@ -1483,6 +1529,12 @@ inline const CLdispatchX& CLIntercept::dispatchX( cl_command_buffer_khr cmdbuf )
     return dispatchX( platform );
 }
 
+inline const CLdispatchX& CLIntercept::dispatchX( cl_mutable_command_khr cmd ) const
+{
+    cl_platform_id  platform = getPlatform( cmd );
+    return dispatchX( platform );
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 //
 inline cl_platform_id CLIntercept::getPlatform( cl_accelerator_intel accelerator ) const
@@ -1599,6 +1651,19 @@ inline cl_platform_id CLIntercept::getPlatform( cl_command_buffer_khr cmdbuf ) c
 {
     CCommandBufferInfoMap::const_iterator iter = m_CommandBufferInfoMap.find(cmdbuf);
     if( iter != m_CommandBufferInfoMap.end() )
+    {
+        return iter->second;
+    }
+    else
+    {
+        return NULL;
+    }
+}
+
+inline cl_platform_id CLIntercept::getPlatform( cl_mutable_command_khr cmd ) const
+{
+    CMutableCommandInfoMap::const_iterator iter = m_MutableCommandInfoMap.find(cmd);
+    if( iter != m_MutableCommandInfoMap.end() )
     {
         return iter->second;
     }
@@ -1808,6 +1873,15 @@ inline uint64_t CLIntercept::getEnqueueCounter() const
 
 inline uint64_t CLIntercept::incrementEnqueueCounter()
 {
+    uint64_t reportInterval = m_Config.ReportInterval;
+    if( reportInterval != 0 )
+    {
+        uint64_t enqueueCounter = m_EnqueueCounter.load();
+        if( enqueueCounter != 0 && enqueueCounter % reportInterval == 0 )
+        {
+            report();
+        }
+    }
     return m_EnqueueCounter.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -2275,8 +2349,16 @@ inline bool CLIntercept::checkDumpImageEnqueueLimits(
         pIntercept->removeUSMAllocation( usmPtr );                          \
     }
 
+#define ADD_MUTABLE_COMMAND( pCmd, cmdbuf )                                 \
+    if( pCmd && pCmd[0] )                                                   \
+    {                                                                       \
+        pIntercept->addMutableCommandInfo( pCmd[0], cmdbuf );               \
+    }
+
 #define SET_KERNEL_ARG( kernel, arg_index, arg_size, arg_value )            \
-    if ( pIntercept->config().DumpArgumentsOnSet )                          \
+    if( pIntercept->config().DumpArgumentsOnSet &&                          \
+        enqueueCounter >= pIntercept->config().DumpArgumentsOnSetMinEnqueue && \
+        enqueueCounter <= pIntercept->config().DumpArgumentsOnSetMaxEnqueue ) \
     {                                                                       \
         pIntercept->dumpArgument(                                           \
             enqueueCounter, kernel, arg_index, arg_size, arg_value );       \
@@ -2402,6 +2484,30 @@ inline bool CLIntercept::checkDumpImageEnqueueLimits(
             "Post", enqueueCounter, kernel, command_queue );                \
     }
 
+#define ADD_MAP_POINTER( _ptr, _flags, _sz )                                \
+    if( _ptr &&                                                             \
+        ( pIntercept->config().ChromeCallLogging ||                         \
+          pIntercept->config().HostPerformanceTiming ||                     \
+          pIntercept->config().DevicePerformanceTiming ||                   \
+          pIntercept->config().ITTPerformanceTiming ||                      \
+          pIntercept->config().ChromePerformanceTiming ||                   \
+          pIntercept->config().DevicePerfCounterEventBasedSampling ) )      \
+    {                                                                       \
+        pIntercept->addMapPointer( _ptr, _flags, _sz );                     \
+    }
+
+#define REMOVE_MAP_PTR( _ptr )                                              \
+    if( _ptr &&                                                             \
+        ( pIntercept->config().ChromeCallLogging ||                         \
+          pIntercept->config().HostPerformanceTiming ||                     \
+          pIntercept->config().DevicePerformanceTiming ||                   \
+          pIntercept->config().ITTPerformanceTiming ||                      \
+          pIntercept->config().ChromePerformanceTiming ||                   \
+          pIntercept->config().DevicePerfCounterEventBasedSampling ) )      \
+    {                                                                       \
+        pIntercept->removeMapPointer( _ptr );                               \
+    }
+
 ///////////////////////////////////////////////////////////////////////////////
 //
 inline bool CLIntercept::checkAubCaptureEnqueueLimits(
@@ -2478,14 +2584,14 @@ inline bool CLIntercept::checkAubCaptureEnqueueLimits(
     }
 
 #define DUMP_PROGRAM_OPTIONS( program, options, isCompile, isLink )         \
-    if( ( modified == false ) &&                                            \
-        ( pIntercept->config().DumpProgramSource ||                         \
-          pIntercept->config().DumpInputProgramBinaries ||                  \
-          pIntercept->config().DumpProgramBinaries ||                       \
-          pIntercept->config().DumpProgramSPIRV ) )                         \
+    if( pIntercept->config().DumpProgramSource ||                           \
+        pIntercept->config().DumpInputProgramBinaries ||                    \
+        pIntercept->config().DumpProgramBinaries ||                         \
+        pIntercept->config().DumpProgramSPIRV )                             \
     {                                                                       \
         pIntercept->dumpProgramOptions(                                     \
             program,                                                        \
+            modified,                                                       \
             isCompile,                                                      \
             isLink,                                                         \
             options );                                                      \
@@ -2570,11 +2676,14 @@ inline bool CLIntercept::checkAubCaptureEnqueueLimits(
     }
 
 #define DUMP_PROGRAM_SOURCE( program, singleString, hash )                  \
-    if( ( injected == false ) &&                                            \
-        ( pIntercept->config().DumpProgramSource ||                         \
-          pIntercept->config().AutoCreateSPIRV ) )                          \
+    if( pIntercept->config().DumpProgramSource ||                           \
+        pIntercept->config().AutoCreateSPIRV )                              \
     {                                                                       \
-        pIntercept->dumpProgramSource( hash, program, singleString );       \
+        pIntercept->dumpProgramSource(                                      \
+            program,                                                        \
+            hash,                                                           \
+            injected,                                                       \
+            singleString );                                                 \
     }                                                                       \
     else if( ( injected == false ) &&                                       \
              ( pIntercept->config().SimpleDumpProgramSource ||              \
@@ -2596,10 +2705,14 @@ inline bool CLIntercept::checkAubCaptureEnqueueLimits(
 // Note: This does not currently combine program binaries before computing
 // the hash.  This will work fine for single-device binaries, but may be
 // incomplete or incorrect for multi-device binaries.
+// Note: This checks for more than just dumping input program binaries and
+// program binaries so we have a hash when we dump program options, also.
 #define COMPUTE_BINARY_HASH( _num, _lengths, _binaries, _hash )             \
     if( _lengths && _binaries &&                                            \
-        ( pIntercept->config().DumpInputProgramBinaries ||                  \
-          pIntercept->config().DumpProgramBinaries ) )                      \
+        ( pIntercept->config().DumpProgramSource ||                         \
+          pIntercept->config().DumpInputProgramBinaries ||                  \
+          pIntercept->config().DumpProgramBinaries ||                       \
+          pIntercept->config().DumpProgramSPIRV ) )                         \
     {                                                                       \
         _hash = pIntercept->hashString(                                     \
             (const char*)_binaries[0],                                      \
@@ -2610,8 +2723,9 @@ inline bool CLIntercept::checkAubCaptureEnqueueLimits(
     if( pIntercept->config().DumpInputProgramBinaries )                     \
     {                                                                       \
         pIntercept->dumpInputProgramBinaries(                               \
-            _hash,                                                          \
             _program,                                                       \
+            _hash,                                                          \
+            false, /* modified */                                           \
             _num,                                                           \
             _devs,                                                          \
             _lengths,                                                       \
@@ -2640,10 +2754,9 @@ inline bool CLIntercept::checkAubCaptureEnqueueLimits(
     }
 
 #define DUMP_PROGRAM_SPIRV( program, length, il, hash )                     \
-    if( ( injected == false ) &&                                            \
-        pIntercept->config().DumpProgramSPIRV )                             \
+    if( pIntercept->config().DumpProgramSPIRV )                             \
     {                                                                       \
-        pIntercept->dumpProgramSPIRV( hash, program, length, il );          \
+        pIntercept->dumpProgramSPIRV( program, hash, injected, length, il );\
     }                                                                       \
     else                                                                    \
     {                                                                       \
@@ -2748,21 +2861,29 @@ inline bool CLIntercept::checkAubCaptureEnqueueLimits(
 
 ///////////////////////////////////////////////////////////////////////////////
 //
-#define GET_TIMING_TAG_BLOCKING( _blocking )                                \
-    std::string hostTag, hostArg;                                           \
+#define GET_TIMING_TAGS_BLOCKING( _blocking, _sz )                          \
+    std::string hostTag, hostArg, deviceTag, deviceArg, traceName;          \
     if( pIntercept->config().ChromeCallLogging ||                           \
         pIntercept->config().CsvPerformanceTracing ||                       \
         ( pIntercept->config().HostPerformanceTiming &&                     \
-          pIntercept->checkHostPerformanceTimingEnqueueLimits( enqueueCounter ) ) )\
+          pIntercept->checkHostPerformanceTimingEnqueueLimits( enqueueCounter ) ) ||\
+        ( ( pIntercept->config().DevicePerformanceTiming ||                   \
+            pIntercept->config().ITTPerformanceTiming ||                      \
+            pIntercept->config().ChromePerformanceTiming ||                   \
+            pIntercept->config().DevicePerfCounterEventBasedSampling ) &&     \
+          pIntercept->checkDevicePerformanceTimingEnqueueLimits( enqueueCounter ) ) )\
     {                                                                       \
         pIntercept->getTimingTagBlocking(                                   \
+            __FUNCTION__,                                                   \
             _blocking,                                                      \
+            _sz,                                                            \
             hostTag,                                                        \
-            hostArg );                                                      \
+            hostArg,                                                        \
+            deviceTag );                                                    \
     }
 
-#define GET_TIMING_TAGS_MAP( _blocking_map, _map_flags )                    \
-    std::string hostTag, hostArg, deviceTag, traceName, deviceArg;          \
+#define GET_TIMING_TAGS_MAP( _blocking_map, _map_flags, _sz )               \
+    std::string hostTag, hostArg, deviceTag, deviceArg, traceName;          \
     if( pIntercept->config().ChromeCallLogging ||                           \
         pIntercept->config().CsvPerformanceTracing ||                       \
         ( pIntercept->config().HostPerformanceTiming &&                     \
@@ -2777,14 +2898,35 @@ inline bool CLIntercept::checkAubCaptureEnqueueLimits(
             __FUNCTION__,                                                   \
             _map_flags,                                                     \
             _blocking_map,                                                  \
+            _sz,                                                            \
             hostTag,                                                        \
             hostArg,                                                        \
             deviceTag,                                                      \
             deviceArg );                                                    \
     }
 
-#define GET_TIMING_TAGS_MEMFILL( _queue, _dst_ptr )                         \
-    std::string hostTag, hostArg, deviceTag, traceName, deviceArg;          \
+#define GET_TIMING_TAGS_UNMAP( _ptr )                                       \
+    std::string hostTag, hostArg, deviceTag, deviceArg, traceName;          \
+    if( pIntercept->config().ChromeCallLogging ||                           \
+        ( pIntercept->config().HostPerformanceTiming &&                     \
+          pIntercept->checkHostPerformanceTimingEnqueueLimits( enqueueCounter ) ) ||\
+        ( ( pIntercept->config().DevicePerformanceTiming ||                   \
+            pIntercept->config().ITTPerformanceTiming ||                      \
+            pIntercept->config().ChromePerformanceTiming ||                   \
+            pIntercept->config().DevicePerfCounterEventBasedSampling ) &&     \
+          pIntercept->checkDevicePerformanceTimingEnqueueLimits( enqueueCounter ) ) )\
+    {                                                                       \
+        pIntercept->getTimingTagsUnmap(                                     \
+            __FUNCTION__,                                                   \
+            _ptr,                                                           \
+            hostTag,                                                        \
+            hostArg,                                                        \
+            deviceTag,                                                      \
+            deviceArg );                                                    \
+    }
+
+#define GET_TIMING_TAGS_MEMFILL( _queue, _dst_ptr, _sz )                    \
+    std::string hostTag, hostArg, deviceTag, deviceArg, traceName;          \
     if( pIntercept->config().ChromeCallLogging ||                           \
         pIntercept->config().CsvPerformanceTracing ||                       \
         ( pIntercept->config().HostPerformanceTiming &&                     \
@@ -2799,14 +2941,15 @@ inline bool CLIntercept::checkAubCaptureEnqueueLimits(
             __FUNCTION__,                                                   \
             _queue,                                                         \
             _dst_ptr,                                                       \
+            _sz,                                                            \
             hostTag,                                                        \
             hostArg,                                                        \
             deviceTag,                                                      \
             deviceArg );                                                    \
     }
 
-#define GET_TIMING_TAGS_MEMCPY( _queue, _blocking, _dst_ptr, _src_ptr )     \
-    std::string hostTag, hostArg, deviceTag, traceName, deviceArg;          \
+#define GET_TIMING_TAGS_MEMCPY( _queue, _blocking, _dst_ptr, _src_ptr, _sz )\
+    std::string hostTag, hostArg, deviceTag, deviceArg, traceName;          \
     if( pIntercept->config().ChromeCallLogging ||                           \
         pIntercept->config().CsvPerformanceTracing ||                       \
         ( pIntercept->config().HostPerformanceTiming &&                     \
@@ -2823,6 +2966,7 @@ inline bool CLIntercept::checkAubCaptureEnqueueLimits(
             _blocking,                                                      \
             _dst_ptr,                                                       \
             _src_ptr,                                                       \
+            _sz,                                                            \
             hostTag,                                                        \
             hostArg,                                                        \
             deviceTag,                                                      \

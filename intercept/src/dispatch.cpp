@@ -361,14 +361,13 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clReleaseDevice)(
     {
         GET_ENQUEUE_COUNTER();
 
-        pIntercept->checkRemoveDeviceInfo( device );
-
         cl_uint ref_count =
             pIntercept->config().CallLogging ?
             pIntercept->getRefCount( device ) : 0;
         CALL_LOGGING_ENTER( "[ ref count = %d ] device = %p",
             ref_count,
             device );
+        pIntercept->checkRemoveDeviceInfo( device );
         HOST_PERFORMANCE_TIMING_START();
 
         cl_int  retVal = pIntercept->dispatch().clReleaseDevice(
@@ -2115,7 +2114,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clBuildProgram)(
 
         SAVE_PROGRAM_OPTIONS_HASH( program, options );
         PROGRAM_OPTIONS_OVERRIDE_INIT( program, options, newOptions, isCompile );
-        DUMP_PROGRAM_OPTIONS( program, options, isCompile, isLink );
+        DUMP_PROGRAM_OPTIONS( program, newOptions ? newOptions : options, isCompile, isLink );
 
         CALL_LOGGING_ENTER( "program = %p, pfn_notify = %p", program, pfn_notify );
         BUILD_LOGGING_INIT();
@@ -2152,6 +2151,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clBuildProgram)(
 
         DUMP_OUTPUT_PROGRAM_BINARIES( program );
         DUMP_KERNEL_ISA_BINARIES( program );
+        // Note: this uses the original program options!
         AUTO_CREATE_SPIRV( program, options );
         INCREMENT_PROGRAM_COMPILE_COUNT( program );
         PROGRAM_OPTIONS_CLEANUP( newOptions );
@@ -2188,7 +2188,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clCompileProgram)(
 
         SAVE_PROGRAM_OPTIONS_HASH( program, options );
         PROGRAM_OPTIONS_OVERRIDE_INIT( program, options, newOptions, isCompile );
-        DUMP_PROGRAM_OPTIONS( program, options, isCompile, isLink );
+        DUMP_PROGRAM_OPTIONS( program, newOptions ? newOptions : options, isCompile, isLink );
 
         CALL_LOGGING_ENTER( "program = %p, pfn_notify = %p", program, pfn_notify );
         BUILD_LOGGING_INIT();
@@ -2261,7 +2261,6 @@ CL_API_ENTRY cl_program CL_API_CALL CLIRN(clLinkProgram)(
         const bool isCompile = false;
         const bool isLink = true;
         char*   newOptions = NULL;
-        cl_program  retVal = NULL;
 
         PROGRAM_LINK_OPTIONS_OVERRIDE_INIT( num_devices, device_list, options, newOptions );
 
@@ -2273,7 +2272,9 @@ CL_API_ENTRY cl_program CL_API_CALL CLIRN(clLinkProgram)(
         BUILD_LOGGING_INIT();
         HOST_PERFORMANCE_TIMING_START();
 
-        if( ( retVal == NULL ) && newOptions )
+        cl_program  retVal = NULL;
+
+        if( newOptions != NULL )
         {
             retVal = pIntercept->dispatch().clLinkProgram(
                 context,
@@ -2286,6 +2287,7 @@ CL_API_ENTRY cl_program CL_API_CALL CLIRN(clLinkProgram)(
                 user_data,
                 errcode_ret );
         }
+
         if( retVal == NULL )
         {
             retVal = pIntercept->dispatch().clLinkProgram(
@@ -2310,7 +2312,7 @@ CL_API_ENTRY cl_program CL_API_CALL CLIRN(clLinkProgram)(
         // This is a new program object, so we don't currently have a hash for it.
         SAVE_PROGRAM_NUMBER( retVal );
         SAVE_PROGRAM_OPTIONS_HASH( retVal, options );
-        DUMP_PROGRAM_OPTIONS( retVal, options, isCompile, isLink );
+        DUMP_PROGRAM_OPTIONS( retVal, newOptions ? newOptions : options, isCompile, isLink );
         DUMP_OUTPUT_PROGRAM_BINARIES( retVal );
         DUMP_KERNEL_ISA_BINARIES( retVal );
         INCREMENT_PROGRAM_COMPILE_COUNT( retVal );
@@ -2700,14 +2702,13 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clReleaseKernel)(
     {
         GET_ENQUEUE_COUNTER();
 
-        pIntercept->checkRemoveKernelInfo( kernel );
-
         cl_uint ref_count =
             pIntercept->config().CallLogging ?
             pIntercept->getRefCount( kernel ) : 0;
         CALL_LOGGING_ENTER( "[ ref count = %d ] kernel = %p",
             ref_count,
             kernel );
+        pIntercept->checkRemoveKernelInfo( kernel );
         HOST_PERFORMANCE_TIMING_START();
 
         cl_int  retVal = pIntercept->dispatch().clReleaseKernel(
@@ -2862,7 +2863,17 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clGetKernelWorkGroupInfo)(
     if( pIntercept && pIntercept->dispatch().clGetKernelWorkGroupInfo )
     {
         GET_ENQUEUE_COUNTER();
-        CALL_LOGGING_ENTER_KERNEL( kernel, "param_name = %s (%X)",
+
+        std::string deviceInfo;
+        if( pIntercept->config().CallLogging )
+        {
+            pIntercept->getDeviceInfoString(
+                1,
+                &device,
+                deviceInfo );
+        }
+        CALL_LOGGING_ENTER_KERNEL( kernel, "device = %s, param_name = %s (%X)",
+            deviceInfo.c_str(),
             pIntercept->enumName().name( param_name ).c_str(),
             param_name );
         HOST_PERFORMANCE_TIMING_START();
@@ -3265,7 +3276,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueReadBuffer)(
                 ptr,
                 eventWaitListString.c_str() );
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
-            GET_TIMING_TAG_BLOCKING( blocking_read );
+            GET_TIMING_TAGS_BLOCKING( blocking_read, cb );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -3299,7 +3310,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueReadBuffer)(
             }
 
             HOST_PERFORMANCE_TIMING_END_WITH_TAG();
-            DEVICE_PERFORMANCE_TIMING_END( command_queue, event );
+            DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             CHECK_ERROR( retVal );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
             CALL_LOGGING_EXIT_EVENT_WITH_TAG( retVal, event );
@@ -3378,7 +3389,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueReadBufferRect)(
                     eventWaitListString.c_str() );
             }
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
-            GET_TIMING_TAG_BLOCKING( blocking_read );
+            GET_TIMING_TAGS_BLOCKING( blocking_read, region ? region[0] * region[1] * region[2] : 0 );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -3401,7 +3412,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueReadBufferRect)(
                 event );
 
             HOST_PERFORMANCE_TIMING_END_WITH_TAG();
-            DEVICE_PERFORMANCE_TIMING_END( command_queue, event );
+            DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             CHECK_ERROR( retVal );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
             CALL_LOGGING_EXIT_EVENT_WITH_TAG( retVal, event );
@@ -3461,7 +3472,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueWriteBuffer)(
                 ptr,
                 eventWaitListString.c_str() );
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
-            GET_TIMING_TAG_BLOCKING( blocking_write );
+            GET_TIMING_TAGS_BLOCKING( blocking_write, cb );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -3495,7 +3506,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueWriteBuffer)(
             }
 
             HOST_PERFORMANCE_TIMING_END_WITH_TAG();
-            DEVICE_PERFORMANCE_TIMING_END( command_queue, event );
+            DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             CHECK_ERROR( retVal );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
             CALL_LOGGING_EXIT_EVENT_WITH_TAG( retVal, event );
@@ -3574,7 +3585,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueWriteBufferRect)(
                     eventWaitListString.c_str() );
             }
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
-            GET_TIMING_TAG_BLOCKING( blocking_write );
+            GET_TIMING_TAGS_BLOCKING( blocking_write, region ? region[0] * region[1] * region[2] : 0 );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -3597,7 +3608,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueWriteBufferRect)(
                 event );
 
             HOST_PERFORMANCE_TIMING_END_WITH_TAG();
-            DEVICE_PERFORMANCE_TIMING_END( command_queue, event );
+            DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             CHECK_ERROR( retVal );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
             CALL_LOGGING_EXIT_EVENT_WITH_TAG( retVal, event );
@@ -3656,6 +3667,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueFillBuffer)(
                 size,
                 eventWaitListString.c_str() );
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
+            GET_TIMING_TAGS_BLOCKING( CL_FALSE, size );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -3670,11 +3682,11 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueFillBuffer)(
                 event_wait_list,
                 event );
 
-            HOST_PERFORMANCE_TIMING_END();
-            DEVICE_PERFORMANCE_TIMING_END( command_queue, event );
+            HOST_PERFORMANCE_TIMING_END_WITH_TAG();
+            DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             CHECK_ERROR( retVal );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
-            CALL_LOGGING_EXIT_EVENT( retVal, event );
+            CALL_LOGGING_EXIT_EVENT_WITH_TAG( retVal, event );
             ADD_EVENT( event ? event[0] : NULL );
         }
 
@@ -3725,6 +3737,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueCopyBuffer)(
                 cb,
                 eventWaitListString.c_str() );
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
+            GET_TIMING_TAGS_BLOCKING( CL_FALSE, cb );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -3755,11 +3768,11 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueCopyBuffer)(
                     event );
             }
 
-            HOST_PERFORMANCE_TIMING_END();
-            DEVICE_PERFORMANCE_TIMING_END( command_queue, event );
+            HOST_PERFORMANCE_TIMING_END_WITH_TAG();
+            DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             CHECK_ERROR( retVal );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
-            CALL_LOGGING_EXIT_EVENT( retVal, event );
+            CALL_LOGGING_EXIT_EVENT_WITH_TAG( retVal, event );
             ADD_EVENT( event ? event[0] : NULL );
         }
 
@@ -3827,6 +3840,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueCopyBufferRect)(
                     eventWaitListString.c_str() );
             }
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
+            GET_TIMING_TAGS_BLOCKING( CL_FALSE, region ? region[0] * region[1] * region[2] : 0 );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -3845,11 +3859,11 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueCopyBufferRect)(
                 event_wait_list,
                 event );
 
-            HOST_PERFORMANCE_TIMING_END();
-            DEVICE_PERFORMANCE_TIMING_END( command_queue, event );
+            HOST_PERFORMANCE_TIMING_END_WITH_TAG();
+            DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             CHECK_ERROR( retVal );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
-            CALL_LOGGING_EXIT_EVENT( retVal, event );
+            CALL_LOGGING_EXIT_EVENT_WITH_TAG( retVal, event );
             ADD_EVENT( event ? event[0] : NULL );
         }
 
@@ -3917,7 +3931,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueReadImage)(
                     eventWaitListString.c_str() );
             }
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
-            GET_TIMING_TAG_BLOCKING( blocking_read );
+            GET_TIMING_TAGS_BLOCKING( blocking_read, 0 );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -3955,7 +3969,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueReadImage)(
             }
 
             HOST_PERFORMANCE_TIMING_END_WITH_TAG();
-            DEVICE_PERFORMANCE_TIMING_END( command_queue, event );
+            DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             CHECK_ERROR( retVal );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
             CALL_LOGGING_EXIT_EVENT_WITH_TAG( retVal, event );
@@ -4015,7 +4029,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueWriteImage)(
                 ptr,
                 eventWaitListString.c_str() );
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
-            GET_TIMING_TAG_BLOCKING( blocking_write );
+            GET_TIMING_TAGS_BLOCKING( blocking_write, 0 );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -4053,7 +4067,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueWriteImage)(
             }
 
             HOST_PERFORMANCE_TIMING_END_WITH_TAG();
-            DEVICE_PERFORMANCE_TIMING_END( command_queue, event );
+            DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             CHECK_ERROR( retVal );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
             CALL_LOGGING_EXIT_EVENT_WITH_TAG( retVal, event );
@@ -4406,7 +4420,7 @@ CL_API_ENTRY void* CL_API_CALL CLIRN(clEnqueueMapBuffer)(
                 eventWaitListString.c_str() );
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
             CHECK_ERROR_INIT( errcode_ret );
-            GET_TIMING_TAGS_MAP( blocking_map, map_flags );
+            GET_TIMING_TAGS_MAP( blocking_map, map_flags, cb );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -4428,6 +4442,7 @@ CL_API_ENTRY void* CL_API_CALL CLIRN(clEnqueueMapBuffer)(
             DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             DUMP_BUFFER_AFTER_MAP( command_queue, buffer, blocking_map, map_flags, retVal, offset, cb );
             CHECK_ERROR( errcode_ret[0] );
+            ADD_MAP_POINTER( retVal, map_flags, cb );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
             if( pIntercept->config().CallLogging )
             {
@@ -4532,7 +4547,7 @@ CL_API_ENTRY void* CL_API_CALL CLIRN(clEnqueueMapImage)(
             }
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
             CHECK_ERROR_INIT( errcode_ret );
-            GET_TIMING_TAGS_MAP( blocking_map, map_flags );
+            GET_TIMING_TAGS_MAP( blocking_map, map_flags, 0 );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -4633,6 +4648,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueUnmapMemObject)(
                 mapped_ptr,
                 eventWaitListString.c_str() );
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
+            GET_TIMING_TAGS_UNMAP( mapped_ptr );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -4644,9 +4660,10 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueUnmapMemObject)(
                 event_wait_list,
                 event );
 
-            HOST_PERFORMANCE_TIMING_END();
-            DEVICE_PERFORMANCE_TIMING_END( command_queue, event );
+            HOST_PERFORMANCE_TIMING_END_WITH_TAG();
+            DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             CHECK_ERROR( retVal );
+            REMOVE_MAP_PTR( mapped_ptr );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
             if( pIntercept->config().CallLogging )
             {
@@ -4658,7 +4675,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueUnmapMemObject)(
                     &map_count,
                     NULL );
             }
-            CALL_LOGGING_EXIT_EVENT( retVal, event, "[ map count = %d ]", map_count );
+            CALL_LOGGING_EXIT_EVENT_WITH_TAG( retVal, event, "[ map count = %d ]", map_count );
             ADD_EVENT( event ? event[0] : NULL );
         }
 
@@ -5630,14 +5647,13 @@ CL_API_ENTRY cl_int CL_API_CALL clReleaseSemaphoreKHR(
         {
             GET_ENQUEUE_COUNTER();
 
-            pIntercept->checkRemoveSemaphoreInfo( semaphore );
-
             cl_uint ref_count =
                 pIntercept->config().CallLogging ?
                 pIntercept->getRefCount( semaphore ) : 0;
             CALL_LOGGING_ENTER( "[ ref count = %d ] semaphore = %p",
                 ref_count,
                 semaphore );
+            pIntercept->checkRemoveSemaphoreInfo( semaphore );
             HOST_PERFORMANCE_TIMING_START();
 
             cl_int  retVal = dispatchX.clReleaseSemaphoreKHR(
@@ -6387,7 +6403,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueSVMMemcpy) (
                 size,
                 eventWaitListString.c_str() );
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
-            GET_TIMING_TAG_BLOCKING( blocking_copy );
+            GET_TIMING_TAGS_BLOCKING( blocking_copy, size );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -6402,7 +6418,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueSVMMemcpy) (
                 event );
 
             HOST_PERFORMANCE_TIMING_END_WITH_TAG();
-            DEVICE_PERFORMANCE_TIMING_END( command_queue, event );
+            DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             CHECK_ERROR( retVal );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
             CALL_LOGGING_EXIT_EVENT_WITH_TAG( retVal, event );
@@ -6459,6 +6475,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueSVMMemFill) (
                 size,
                 eventWaitListString.c_str() );
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
+            GET_TIMING_TAGS_BLOCKING( CL_FALSE, size );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -6472,11 +6489,11 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueSVMMemFill) (
                 event_wait_list,
                 event );
 
-            HOST_PERFORMANCE_TIMING_END();
-            DEVICE_PERFORMANCE_TIMING_END( command_queue, event );
+            HOST_PERFORMANCE_TIMING_END_WITH_TAG();
+            DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             CHECK_ERROR( retVal );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
-            CALL_LOGGING_EXIT_EVENT( retVal, event );
+            CALL_LOGGING_EXIT_EVENT_WITH_TAG( retVal, event );
             ADD_EVENT( event ? event[0] : NULL );
         }
 
@@ -6527,7 +6544,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueSVMMap) (
                 size,
                 eventWaitListString.c_str() );
             CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
-            GET_TIMING_TAGS_MAP( blocking_map, map_flags );
+            GET_TIMING_TAGS_MAP( blocking_map, map_flags, size );
             DEVICE_PERFORMANCE_TIMING_START( event );
             HOST_PERFORMANCE_TIMING_START();
 
@@ -6544,6 +6561,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueSVMMap) (
             HOST_PERFORMANCE_TIMING_END_WITH_TAG();
             DEVICE_PERFORMANCE_TIMING_END_WITH_TAG( command_queue, event );
             CHECK_ERROR( retVal );
+            ADD_MAP_POINTER( svm_ptr, map_flags, size );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
             CALL_LOGGING_EXIT_EVENT_WITH_TAG( retVal, event );
             ADD_EVENT( event ? event[0] : NULL );
@@ -6607,6 +6625,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clEnqueueSVMUnmap) (
             HOST_PERFORMANCE_TIMING_END();
             DEVICE_PERFORMANCE_TIMING_END( command_queue, event );
             CHECK_ERROR( retVal );
+            REMOVE_MAP_PTR( svm_ptr );
             ADD_OBJECT_ALLOCATION( event ? event[0] : NULL );
             CALL_LOGGING_EXIT_EVENT( retVal, event );
             ADD_EVENT( event ? event[0] : NULL );
@@ -7267,7 +7286,19 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clGetKernelSubGroupInfo) (
     if( pIntercept && pIntercept->dispatch().clGetKernelSubGroupInfo )
     {
         GET_ENQUEUE_COUNTER();
-        CALL_LOGGING_ENTER();
+
+        std::string deviceInfo;
+        if( pIntercept->config().CallLogging )
+        {
+            pIntercept->getDeviceInfoString(
+                1,
+                &device,
+                deviceInfo );
+        }
+        CALL_LOGGING_ENTER_KERNEL( kernel, "device = %s, param_name = %s (%08X)",
+            deviceInfo.c_str(),
+            pIntercept->enumName().name( param_name ).c_str(),
+            param_name );
         HOST_PERFORMANCE_TIMING_START();
 
         cl_int retVal = pIntercept->dispatch().clGetKernelSubGroupInfo(
@@ -7312,7 +7343,19 @@ CL_API_ENTRY cl_int CL_API_CALL clGetKernelSubGroupInfoKHR(
         if( dispatchX.clGetKernelSubGroupInfoKHR )
         {
             GET_ENQUEUE_COUNTER();
-            CALL_LOGGING_ENTER();
+
+            std::string deviceInfo;
+            if( pIntercept->config().CallLogging )
+            {
+                pIntercept->getDeviceInfoString(
+                    1,
+                    &device,
+                    deviceInfo );
+            }
+            CALL_LOGGING_ENTER_KERNEL( kernel, "device = %s, param_name = %s (%08X)",
+                deviceInfo.c_str(),
+                pIntercept->enumName().name( param_name ).c_str(),
+                param_name );
             HOST_PERFORMANCE_TIMING_START();
 
             cl_int retVal = dispatchX.clGetKernelSubGroupInfoKHR(
@@ -9095,14 +9138,13 @@ CL_API_ENTRY cl_int CL_API_CALL clReleaseAcceleratorINTEL(
         {
             GET_ENQUEUE_COUNTER();
 
-            pIntercept->checkRemoveAcceleratorInfo( accelerator );
-
             cl_uint ref_count =
                 pIntercept->config().CallLogging ?
                 pIntercept->getRefCount( accelerator ) : 0;
             CALL_LOGGING_ENTER( "[ ref count = %d ] accelerator = %p",
                 ref_count,
                 accelerator );
+            pIntercept->checkRemoveAcceleratorInfo( accelerator );
             HOST_PERFORMANCE_TIMING_START();
 
             cl_int  retVal = dispatchX.clReleaseAcceleratorINTEL(
@@ -9981,7 +10023,7 @@ CL_API_ENTRY cl_int CL_API_CALL clEnqueueMemsetINTEL(   // Deprecated
                     size,
                     eventWaitListString.c_str() );
                 CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
-                GET_TIMING_TAGS_MEMFILL( queue, dst_ptr );
+                GET_TIMING_TAGS_MEMFILL( queue, dst_ptr, size );
                 DEVICE_PERFORMANCE_TIMING_START( event );
                 HOST_PERFORMANCE_TIMING_START();
 
@@ -10051,7 +10093,7 @@ CL_API_ENTRY cl_int CL_API_CALL clEnqueueMemFillINTEL(
                     size,
                     eventWaitListString.c_str() );
                 CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
-                GET_TIMING_TAGS_MEMFILL( queue, dst_ptr );
+                GET_TIMING_TAGS_MEMFILL( queue, dst_ptr, size );
                 DEVICE_PERFORMANCE_TIMING_START( event );
                 HOST_PERFORMANCE_TIMING_START();
 
@@ -10123,7 +10165,7 @@ CL_API_ENTRY cl_int CL_API_CALL clEnqueueMemcpyINTEL(
                     size,
                     eventWaitListString.c_str() );
                 CHECK_EVENT_LIST( num_events_in_wait_list, event_wait_list, event );
-                GET_TIMING_TAGS_MEMCPY( queue, blocking, dst_ptr, src_ptr );
+                GET_TIMING_TAGS_MEMCPY( queue, blocking, dst_ptr, src_ptr, size );
                 DEVICE_PERFORMANCE_TIMING_START( event );
                 HOST_PERFORMANCE_TIMING_START();
 
@@ -10444,14 +10486,13 @@ CL_API_ENTRY cl_int CL_API_CALL clReleaseCommandBufferKHR(
         {
             GET_ENQUEUE_COUNTER();
 
-            pIntercept->checkRemoveCommandBufferInfo( command_buffer );
-
             cl_uint ref_count =
                 pIntercept->config().CallLogging ?
                 pIntercept->getRefCount( command_buffer ) : 0;
             CALL_LOGGING_ENTER( "[ ref count = %d ] command_buffer = %p",
                 ref_count,
                 command_buffer );
+            pIntercept->checkRemoveCommandBufferInfo( command_buffer );
             HOST_PERFORMANCE_TIMING_START();
 
             cl_int  retVal = dispatchX.clReleaseCommandBufferKHR(
@@ -10571,6 +10612,7 @@ CL_API_ENTRY cl_int CL_API_CALL clCommandBarrierWithWaitListKHR(
             HOST_PERFORMANCE_TIMING_END();
             CHECK_ERROR( retVal );
             CALL_LOGGING_EXIT( retVal );
+            ADD_MUTABLE_COMMAND( mutable_handle, command_buffer );
 
             return retVal;
         }
@@ -10626,6 +10668,7 @@ CL_API_ENTRY cl_int CL_API_CALL clCommandCopyBufferKHR(
             HOST_PERFORMANCE_TIMING_END();
             CHECK_ERROR( retVal );
             CALL_LOGGING_EXIT( retVal );
+            ADD_MUTABLE_COMMAND( mutable_handle, command_buffer );
 
             return retVal;
         }
@@ -10689,6 +10732,7 @@ CL_API_ENTRY cl_int CL_API_CALL clCommandCopyBufferRectKHR(
             HOST_PERFORMANCE_TIMING_END();
             CHECK_ERROR( retVal );
             CALL_LOGGING_EXIT( retVal );
+            ADD_MUTABLE_COMMAND( mutable_handle, command_buffer );
 
             return retVal;
         }
@@ -10744,6 +10788,7 @@ CL_API_ENTRY cl_int CL_API_CALL clCommandCopyBufferToImageKHR(
             HOST_PERFORMANCE_TIMING_END();
             CHECK_ERROR( retVal );
             CALL_LOGGING_EXIT( retVal );
+            ADD_MUTABLE_COMMAND( mutable_handle, command_buffer );
 
             return retVal;
         }
@@ -10799,6 +10844,7 @@ CL_API_ENTRY cl_int CL_API_CALL clCommandCopyImageKHR(
             HOST_PERFORMANCE_TIMING_END();
             CHECK_ERROR( retVal );
             CALL_LOGGING_EXIT( retVal );
+            ADD_MUTABLE_COMMAND( mutable_handle, command_buffer );
 
             return retVal;
         }
@@ -10854,6 +10900,7 @@ CL_API_ENTRY cl_int CL_API_CALL clCommandCopyImageToBufferKHR(
             HOST_PERFORMANCE_TIMING_END();
             CHECK_ERROR( retVal );
             CALL_LOGGING_EXIT( retVal );
+            ADD_MUTABLE_COMMAND( mutable_handle, command_buffer );
 
             return retVal;
         }
@@ -10909,6 +10956,7 @@ CL_API_ENTRY cl_int CL_API_CALL clCommandFillBufferKHR(
             HOST_PERFORMANCE_TIMING_END();
             CHECK_ERROR( retVal );
             CALL_LOGGING_EXIT( retVal );
+            ADD_MUTABLE_COMMAND( mutable_handle, command_buffer );
 
             return retVal;
         }
@@ -10962,6 +11010,7 @@ CL_API_ENTRY cl_int CL_API_CALL clCommandFillImageKHR(
             HOST_PERFORMANCE_TIMING_END();
             CHECK_ERROR( retVal );
             CALL_LOGGING_EXIT( retVal );
+            ADD_MUTABLE_COMMAND( mutable_handle, command_buffer );
 
             return retVal;
         }
@@ -11020,6 +11069,7 @@ CL_API_ENTRY cl_int CL_API_CALL clCommandNDRangeKernelKHR(
             HOST_PERFORMANCE_TIMING_END();
             CHECK_ERROR( retVal );
             CALL_LOGGING_EXIT( retVal );
+            ADD_MUTABLE_COMMAND( mutable_handle, command_buffer );
 
             return retVal;
         }
@@ -11054,6 +11104,83 @@ CL_API_ENTRY cl_int CL_API_CALL clGetCommandBufferInfoKHR(
 
             cl_int  retVal = dispatchX.clGetCommandBufferInfoKHR(
                 command_buffer,
+                param_name,
+                param_value_size,
+                param_value,
+                param_value_size_ret );
+
+            HOST_PERFORMANCE_TIMING_END();
+            CHECK_ERROR( retVal );
+            CALL_LOGGING_EXIT( retVal );
+
+            return retVal;
+        }
+    }
+
+    NULL_FUNCTION_POINTER_RETURN_ERROR();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+//
+// cl_khr_command_buffer_mutable_dispatch
+CL_API_ENTRY cl_int CL_API_CALL clUpdateMutableCommandsKHR(
+    cl_command_buffer_khr command_buffer,
+    const cl_mutable_base_config_khr* mutable_config)
+{
+    CLIntercept*    pIntercept = GetIntercept();
+
+    if( pIntercept )
+    {
+        const auto& dispatchX = pIntercept->dispatchX(command_buffer);
+        if( dispatchX.clUpdateMutableCommandsKHR )
+        {
+            GET_ENQUEUE_COUNTER();
+            CALL_LOGGING_ENTER( "command_buffer = %p, mutable_config = %p",
+                command_buffer,
+                mutable_config );
+            HOST_PERFORMANCE_TIMING_START();
+
+            cl_int  retVal = dispatchX.clUpdateMutableCommandsKHR(
+                command_buffer,
+                mutable_config );
+
+            HOST_PERFORMANCE_TIMING_END();
+            CHECK_ERROR( retVal );
+            CALL_LOGGING_EXIT( retVal );
+
+            return retVal;
+        }
+    }
+
+    NULL_FUNCTION_POINTER_RETURN_ERROR();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+//
+// cl_khr_command_buffer_mutable_dispatch
+CL_API_ENTRY cl_int CL_API_CALL clGetMutableCommandInfoKHR(
+    cl_mutable_command_khr command,
+    cl_mutable_command_info_khr param_name,
+    size_t param_value_size,
+    void* param_value,
+    size_t* param_value_size_ret)
+{
+    CLIntercept*    pIntercept = GetIntercept();
+
+    if( pIntercept )
+    {
+        const auto& dispatchX = pIntercept->dispatchX(command);
+        if( dispatchX.clGetMutableCommandInfoKHR )
+        {
+            GET_ENQUEUE_COUNTER();
+            CALL_LOGGING_ENTER( "command_buffer = %p, param_name = %s (%08X)",
+                command,
+                pIntercept->enumName().name( param_name ).c_str(),
+                param_name );
+            HOST_PERFORMANCE_TIMING_START();
+
+            cl_int  retVal = dispatchX.clGetMutableCommandInfoKHR(
+                command,
                 param_name,
                 param_value_size,
                 param_value,

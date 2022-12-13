@@ -8,7 +8,7 @@ on:
     paths-ignore:
       - '**/*.md'
     branches:
-      - master
+      - main
 
 env:
   BUILD_TYPE: RelWithDebInfo
@@ -17,7 +17,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Check Tabs
       run: |
@@ -37,7 +37,7 @@ jobs:
     runs-on: ${{matrix.os}}
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Create Build Directory
       run: cmake -E make_directory ${{runner.workspace}}/build
@@ -50,7 +50,7 @@ jobs:
     - name: Build
       working-directory: ${{runner.workspace}}/build
       shell: bash
-      run: cmake --build . --config $BUILD_TYPE
+      run: cmake --build . --parallel 4 --config $BUILD_TYPE
 
     #- name: Test
     #  working-directory: ${{runner.workspace}}/build

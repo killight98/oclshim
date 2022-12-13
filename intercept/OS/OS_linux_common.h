@@ -7,9 +7,9 @@
 #pragma once
 
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <dlfcn.h>
 #include <fcntl.h>
-#include <pthread.h>
 #include <stdint.h>
 #include <string.h>
 #include <syslog.h>
@@ -24,6 +24,12 @@
 
 #ifdef __ANDROID__
 #include <android/log.h>
+#endif
+
+#ifdef __FreeBSD__
+#include <pthread_np.h>
+#include <sys/user.h>
+#include <libutil.h>
 #endif
 
 /*****************************************************************************\
@@ -119,8 +125,14 @@ inline uint64_t Services_Common::GetProcessID() const
 
 inline uint64_t Services_Common::GetThreadID() const
 {
-    // TODO: Is this the thread ID we should be returning?
-    return pthread_self();
+#if defined(__linux__)
+    return gettid();
+#elif defined(__FreeBSD__)
+    return pthread_getthreadid_np();
+#else
+#pragma message("Not sure how to implement GetThreadID()")
+    return 0;
+#endif
 }
 
 inline std::string Services_Common::GetProcessName() const
@@ -128,6 +140,7 @@ inline std::string Services_Common::GetProcessName() const
     char    processName[ 1024 ];
     char*   pProcessName = processName;
 
+#if defined(__linux__)
     size_t  bytes = readlink(
         "/proc/self/exe",
         processName,
@@ -139,6 +152,19 @@ inline std::string Services_Common::GetProcessName() const
         pProcessName = strrchr( processName, '/' );
         pProcessName++;
     }
+#elif defined(__FreeBSD__)
+    struct kinfo_proc* proc = kinfo_getproc(getpid());
+    if( proc )
+    {
+        strncpy( processName, proc->ki_comm, sizeof( processName ) );
+        processName[ sizeof( processName ) - 1 ] = '\0';
+
+        free(proc);
+    }
+#else
+#pragma message("Not sure how to implement GetProcessName()")
+    if (false) {}
+#endif
     else
     {
         strncpy( processName, "process.exe", sizeof( processName ) );

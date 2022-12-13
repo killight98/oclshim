@@ -92,6 +92,8 @@ static void getCommandLine(char *argv[], int startArg)
 }
 
 #define SETENV( _name, _value ) _putenv_s( _name, _value )
+#define GETENV( _name, _value ) _dupenv_s( &_value, NULL, _name )
+#define FREEENV( _value ) free( _value )
 
 #else
 
@@ -103,6 +105,13 @@ static void getCommandLine(char *argv[], int startArg)
 #ifdef __APPLE__
 #include <libproc.h>
 #include <mach-o/dyld.h>
+#endif
+#ifdef __FreeBSD__
+#include <pthread_np.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
+#include <libprocstat.h>
+#include <libutil.h>
 #endif
 
 #ifdef __APPLE__
@@ -172,12 +181,34 @@ static bool getEnvVars(
     return found;
 }
 
-#define SETENV( _name, _value ) setenv( _name, _value, 1 );
+#define SETENV( _name, _value ) setenv( _name, _value, 1 )
+#define GETENV( _name, _value ) _value = getenv(_name)
+#define FREEENV( _value ) (void)_value
 
 bool set_LD_LIBRARY_PATH = true;
 bool set_LD_PRELOAD = true;
 
 #endif
+
+static void checkSetEnv(const char* name, const char* value)
+{
+    char* oldValue = NULL;
+
+    GETENV(name, oldValue);
+
+    if (oldValue != NULL && value != NULL && strcmp(value, oldValue)) {
+        fprintf(stderr, "cliloader warning: forcing environment variable %s from %s to %s\n",
+            name,
+            oldValue,
+            value);
+    } else {
+        DEBUG("setting environment variable %s to %s\n", name, value);
+    }
+
+    SETENV(name, value);
+
+    FREEENV( oldValue );
+}
 
 // Note: This assumes that the CLIntercept DLL/so is in the same directory
 // as the executable!
@@ -205,6 +236,7 @@ static std::string getProcessDirectory()
 
 #elif defined(__APPLE__)
 
+    // Get full path to executable:
     char    processName[ 1024 ];
     pid_t   pid = getpid();
     int     ret = proc_pidpath( pid, processName, sizeof(processName) );
@@ -224,7 +256,7 @@ static std::string getProcessDirectory()
     DEBUG("process directory is %s\n", pProcessName);
     return std::string(processName);
 
-#else // Linux
+#elif defined(__linux__)
 
     // Get full path to executable:
     char    processName[ 1024 ];
@@ -251,11 +283,53 @@ static std::string getProcessDirectory()
     DEBUG("process directory is %s\n", processName);
     return std::string(processName);
 
+#elif defined(__FreeBSD__)
+
+    // Get full path to executable:
+    char    processName[ 1024 ];
+    struct procstat *prstat = procstat_open_sysctl();
+    if( prstat == NULL )
+    {
+        die("procstat_open_sysctl returned NULL");
+    }
+    unsigned int count = 0;
+    struct kinfo_proc *kp = procstat_getprocs(prstat, KERN_PROC_PID, getpid(), &count);
+    if( count != 1 )
+    {
+        die("Unexpected count returned from procstat_getprocs");
+    }
+    int ret = procstat_getpathname(prstat, kp, processName, sizeof(processName));
+    if (ret != 0) {
+        die("procstat_getpathname returned an error");
+    }
+    procstat_close(prstat);
+
+    processName[ sizeof( processName ) - 1 ] = '\0';
+    DEBUG("full path to executable is: %s\n", processName);
+
+    char*   pProcessName = processName;
+    pProcessName = strrchr( processName, '/' );
+    if( pProcessName != NULL )
+    {
+        DEBUG("pProcessName is non-NULL: %s\n", pProcessName);
+        *pProcessName = '\0';
+    }
+
+    DEBUG("process directory is %s\n", processName);
+    return std::string(processName);
+
+#else
+#pragma message("Need to implement getProcessDirectory()")
+    return std::string();
 #endif
 }
 
 static bool parseArguments(int argc, char *argv[])
 {
+    // Defer setting the MDAPI group, since it may be overridden via an
+    // explicit option.
+    const char* mdapiGroup = NULL;
+
     bool    unknownOption = false;
 
     SETENV("CLI_ReportToStderr", "1");
@@ -283,73 +357,78 @@ static bool parseArguments(int argc, char *argv[])
 #endif
         else if( !strcmp(argv[i], "-q") || !strcmp(argv[i], "--quiet") )
         {
-            SETENV("CLI_SuppressLogging", "1");
+            checkSetEnv("CLI_SuppressLogging", "1");
         }
         else if( !strcmp(argv[i], "-c") || !strcmp(argv[i], "--call-logging") )
         {
-            SETENV("CLI_CallLogging", "1");
+            checkSetEnv("CLI_CallLogging", "1");
         }
         else if( !strcmp(argv[i], "-e") || !strcmp(argv[i], "--error-logging") )
         {
-            SETENV("CLI_ErrorLogging", "1");
+            checkSetEnv("CLI_ErrorLogging", "1");
         }
         else if( !strcmp(argv[i], "--tid") )
         {
-            SETENV("CLI_CallLoggingThreadId", "1");
+            checkSetEnv("CLI_CallLoggingThreadId", "1");
         }
         else if( !strcmp(argv[i], "--appendpid") )
         {
-            SETENV("CLI_AppendPid", "1");
+            checkSetEnv("CLI_AppendPid", "1");
+        }
+        else if( !strcmp(argv[i], "--demangle") )
+        {
+            checkSetEnv("CLI_DemangleKernelNames", "1");
         }
         else if( !strcmp(argv[i], "-dsrc") || !strcmp(argv[i], "--dump-source") )
         {
-            SETENV("CLI_DumpProgramSource", "1");
+            checkSetEnv("CLI_DumpProgramSource", "1");
         }
         else if( !strcmp(argv[i], "-dspv") || !strcmp(argv[i], "--dump-spirv") )
         {
-            SETENV("CLI_DumpProgramSPIRV", "1");
+            checkSetEnv("CLI_DumpProgramSPIRV", "1");
         }
         else if( !strcmp(argv[i], "--dump-output-binaries") )
         {
-            SETENV("CLI_DumpProgramBinaries", "1");
+            checkSetEnv("CLI_DumpProgramBinaries", "1");
         }
         else if( !strcmp(argv[i], "--dump-kernel-isa-binaries") )
         {
-            SETENV("CLI_DumpKernelISABinaries", "1");
+            checkSetEnv("CLI_DumpKernelISABinaries", "1");
         }
         else if( !strcmp(argv[i], "-d") || !strcmp(argv[i], "--device-timing") )
         {
-            SETENV("CLI_DevicePerformanceTiming", "1");
+            checkSetEnv("CLI_DevicePerformanceTiming", "1");
         }
         else if( !strcmp(argv[i], "-dv") || !strcmp(argv[i], "--device-timing-verbose") )
         {
-            SETENV("CLI_DevicePerformanceTiming", "1");
-            SETENV("CLI_DevicePerformanceTimeKernelInfoTracking", "1");
-            SETENV("CLI_DevicePerformanceTimeGWSTracking", "1");
-            SETENV("CLI_DevicePerformanceTimeLWSTracking", "1");
+            checkSetEnv("CLI_DevicePerformanceTiming", "1");
+            checkSetEnv("CLI_DevicePerformanceTimeKernelInfoTracking", "1");
+            checkSetEnv("CLI_DevicePerformanceTimeGWSTracking", "1");
+            checkSetEnv("CLI_DevicePerformanceTimeLWSTracking", "1");
+            checkSetEnv("CLI_DevicePerformanceTimeTransferTracking", "1");
         }
         else if( !strcmp(argv[i], "-ccl") || !strcmp(argv[i], "--chrome-call-logging") )
         {
-            SETENV("CLI_ChromeCallLogging", "1");
+            checkSetEnv("CLI_ChromeCallLogging", "1");
         }
         else if( !strcmp(argv[i], "-cdt") || !strcmp(argv[i], "--chrome-device-timeline") )
         {
-            SETENV("CLI_ChromePerformanceTiming", "1");
+            checkSetEnv("CLI_ChromePerformanceTiming", "1");
         }
         else if( !strcmp(argv[i], "-ckt") || !strcmp(argv[i], "--chrome-kernel-timeline") )
         {
-            SETENV("CLI_ChromePerformanceTiming", "1");
-            SETENV("CLI_ChromePerformanceTimingPerKernel", "1");
+            checkSetEnv("CLI_ChromePerformanceTiming", "1");
+            checkSetEnv("CLI_ChromePerformanceTimingPerKernel", "1");
         }
         else if( !strcmp(argv[i], "-cds") || !strcmp(argv[i], "--chrome-device-stages") )
         {
-            SETENV("CLI_ChromePerformanceTiming", "1");
-            SETENV("CLI_ChromePerformanceTimingInStages", "1");
+            checkSetEnv("CLI_ChromePerformanceTiming", "1");
+            checkSetEnv("CLI_ChromePerformanceTimingInStages", "1");
         }
         else if( !strcmp(argv[i], "--driver-diagnostics") || !strcmp(argv[i], "-ddiag") )
         {
-            SETENV("CLI_ContextCallbackLogging", "1");
-            SETENV("CLI_ContextHintLevel", "7");    // GOOD, BAD, and NEUTRAL
+            checkSetEnv("CLI_ContextCallbackLogging", "1");
+            checkSetEnv("CLI_ContextHintLevel", "7");    // GOOD, BAD, and NEUTRAL
         }
         else if( !strcmp(argv[i], "--api-tracing") || !strcmp(argv[i], "-at"))
         {
@@ -360,27 +439,41 @@ static bool parseArguments(int argc, char *argv[])
         }
         else if( !strcmp(argv[i], "--mdapi-ebs") )
         {
-            SETENV("CLI_DevicePerfCounterCustom", "ComputeBasic");
-            SETENV("CLI_DevicePerfCounterEventBasedSampling", "1" );
-            SETENV("CLI_DevicePerfCounterTiming", "1");
+            if( mdapiGroup == NULL )
+            {
+                mdapiGroup = "ComputeBasic";
+            }
+            checkSetEnv("CLI_DevicePerfCounterEventBasedSampling", "1" );
+            checkSetEnv("CLI_DevicePerfCounterTiming", "1");
         }
         else if( !strcmp(argv[i], "--mdapi-tbs") )
         {
-            SETENV("CLI_DevicePerfCounterCustom", "ComputeBasic");
-            SETENV("CLI_DevicePerfCounterTimeBasedSampling", "1" );
+            if( mdapiGroup == NULL )
+            {
+                mdapiGroup = "ComputeBasic";
+            }
+            checkSetEnv("CLI_DevicePerfCounterTimeBasedSampling", "1" );
+        }
+        else if( !strcmp(argv[i], "--mdapi-group") )
+        {
+            ++i;
+            if( i < argc )
+            {
+                mdapiGroup = argv[i];
+            }
         }
         else if( !strcmp(argv[i], "-h") || !strcmp(argv[i], "--host-timing") )
         {
-            SETENV("CLI_HostPerformanceTiming", "1");
+            checkSetEnv("CLI_HostPerformanceTiming", "1");
         }
         else if( !strcmp(argv[i], "-l") || !strcmp(argv[i], "--leak-checking") )
         {
-            SETENV("CLI_LeakChecking", "1");
+            checkSetEnv("CLI_LeakChecking", "1");
         }
         else if( !strcmp(argv[i], "-f") || !strcmp(argv[i], "--output-to-file") )
         {
-            SETENV("CLI_LogToFile", "1");
-            SETENV("CLI_ReportToStderr", "0");
+            checkSetEnv("CLI_LogToFile", "1");
+            checkSetEnv("CLI_ReportToStderr", "0");
         }
         else if (argv[i][0] == '-')
         {
@@ -388,6 +481,11 @@ static bool parseArguments(int argc, char *argv[])
         }
         else
         {
+            if( mdapiGroup != NULL )
+            {
+                checkSetEnv("CLI_DevicePerfCounterCustom", mdapiGroup);
+            }
+
 #if defined(_WIN32)
             getCommandLine(argv, i);
 #else // not Windows
@@ -431,6 +529,7 @@ static bool parseArguments(int argc, char *argv[])
             "  --error-logging [-e]             Detect and Log API Errors\n"
             "  --tid                            Include Thread ID in the API Call Log\n"
             "  --appendpid                      Include Process ID in the Dump Directory\n"
+            "  --demangle                       Demangle Kernel Names\n"
             "  --dump-source [-dsrc]            Dump Input Program Source\n"
             "  --dump-spirv [-dspv]             Dump Input Program IL (SPIR-V)\n"
             "  --dump-output-binaries           Dump Output Program Binaries\n"
@@ -445,6 +544,7 @@ static bool parseArguments(int argc, char *argv[])
             "  --api-tracing [-at]              Record Both Device and HOST API Calls to a CSV Trace File\n"
             "  --mdapi-ebs                      Report Event-Based MDAPI Counters (Intel GPU Only)\n"
             "  --mdapi-tbs                      Report Time-Based MDAPI Counters (Intel GPU Only)\n"
+            "  --mdapi-group <NAME>             Choose MDAPI Counters to Collect (Intel GPU Only)\n"
             "  --host-timing [-h]               Report Host API Execution Time\n"
             "  --leak-checking [-l]             Track and Report OpenCL Leaks\n"
             "  --output-to-file [-f]            Log and Report to Files vs. stderr\n"

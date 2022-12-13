@@ -14,6 +14,7 @@
 #include <time.h>       // strdate
 
 #include "common.h"
+#include "demangle.h"
 #include "emulate.h"
 #include "intercept.h"
 
@@ -327,7 +328,7 @@ bool CLIntercept::init()
 #if defined(_WIN32)
     OS::Services_Common::ENV_PREFIX = "CLI_";
     OS::Services_Common::REGISTRY_KEY = "SOFTWARE\\INTEL\\IGFX\\CLINTERCEPT";
-#elif defined(__linux__) || defined(__APPLE__)
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
     OS::Services_Common::ENV_PREFIX = "CLI_";
     OS::Services_Common::CONFIG_FILE = "clintercept.conf";
     OS::Services_Common::SYSTEM_DIR = "/etc/OpenCL";
@@ -357,7 +358,7 @@ bool CLIntercept::init()
 #include "controls.h"
 #undef CLI_CONTROL
 
-#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
+#if defined(_WIN32) || defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
     if( !m_Config.DumpDir.empty() )
     {
         std::replace( m_Config.DumpDir.begin(), m_Config.DumpDir.end(), '\\', '/' );
@@ -480,6 +481,11 @@ bool CLIntercept::init()
 #else
         "    MDAPI(NOT supported)\n"
 #endif
+#if defined(USE_DEMANGLE)
+        "    Demangling(supported)\n"
+#else
+        "    Demangling(NOT supported)\n"
+#endif
 #if defined(CLINTERCEPT_HIGH_RESOLUTON_CLOCK)
         "    clock(high_resolution_clock)\n"
 #else
@@ -489,14 +495,14 @@ bool CLIntercept::init()
 #if defined(_WIN32)
     log( "CLIntercept environment variable prefix: " + std::string( OS::Services_Common::ENV_PREFIX ) + "\n"  );
     log( "CLIntercept registry key: " + std::string( OS::Services_Common::REGISTRY_KEY ) + "\n" );
-#elif defined(__linux__) || defined(__APPLE__)
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
     log( "CLIntercept environment variable prefix: " + std::string( OS::Services_Common::ENV_PREFIX ) + "\n"  );
     log( "CLIntercept config file: " + std::string( OS::Services_Common::CONFIG_FILE ) + "\n" );
 #endif
 
     // Windows and Linux load the real OpenCL library and retrieve
     // the OpenCL entry points from the real library dynamically.
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || defined(__FreeBSD__)
     if( libName != "" )
     {
         log( "Read OpenCL file name from user parameters: " + libName + "\n" );
@@ -536,7 +542,7 @@ bool CLIntercept::init()
             "real_libOpenCL.so",
         };
 
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__FreeBSD__)
 
         const std::string libNames[] =
         {
@@ -4641,8 +4647,9 @@ void CLIntercept::dumpProgramSourceScript(
 ///////////////////////////////////////////////////////////////////////////////
 //
 void CLIntercept::dumpProgramSource(
-    uint64_t hash,
     cl_program program,
+    uint64_t hash,
+    bool modified,
     const char* singleString )
 {
     std::lock_guard<std::mutex> lock(m_Mutex);
@@ -4655,6 +4662,11 @@ void CLIntercept::dumpProgramSource(
     {
         OS().GetDumpDirectoryName( sc_DumpDirectoryName, fileName );
     }
+    if( modified )
+    {
+        fileName += "/Modified";
+    }
+
     // Make the filename.  It will have the form:
     //   CLI_<program number>_<hash>_source.cl
     {
@@ -4712,8 +4724,9 @@ void CLIntercept::dumpProgramSource(
 ///////////////////////////////////////////////////////////////////////////////
 //
 void CLIntercept::dumpInputProgramBinaries(
-    uint64_t hash,
     const cl_program program,
+    uint64_t hash,
+    bool modified,
     cl_uint num_devices,
     const cl_device_id* device_list,
     const size_t* lengths,
@@ -4728,6 +4741,10 @@ void CLIntercept::dumpInputProgramBinaries(
     // Get the dump directory name.
     {
         OS().GetDumpDirectoryName( sc_DumpDirectoryName, fileName );
+    }
+    if( modified )
+    {
+        fileName += "/Modified";
     }
 
     // Make the filename.  It will have the form:
@@ -4821,8 +4838,9 @@ void CLIntercept::dumpInputProgramBinaries(
 ///////////////////////////////////////////////////////////////////////////////
 //
 void CLIntercept::dumpProgramSPIRV(
-    uint64_t hash,
     cl_program program,
+    uint64_t hash,
+    bool modified,
     const size_t length,
     const void* il )
 {
@@ -4835,6 +4853,10 @@ void CLIntercept::dumpProgramSPIRV(
     // Get the dump directory name.
     {
         OS().GetDumpDirectoryName( sc_DumpDirectoryName, fileName );
+    }
+    if( modified )
+    {
+        fileName += "/Modified";
     }
 
     // Make the filename.  It will have the form:
@@ -4864,7 +4886,7 @@ void CLIntercept::dumpProgramSPIRV(
         OS().MakeDumpDirectories( fileName );
     }
 
-    // Dump the program source to a .cl file.
+    // Dump the program source to a .spv file.
     {
         std::ofstream os;
         os.open(
@@ -5031,6 +5053,7 @@ void CLIntercept::dumpProgramOptionsScript(
 //
 void CLIntercept::dumpProgramOptions(
     const cl_program program,
+    bool modified,
     cl_bool isCompile,
     cl_bool isLink,
     const char* options )
@@ -5053,6 +5076,11 @@ void CLIntercept::dumpProgramOptions(
         {
             OS().GetDumpDirectoryName( sc_DumpDirectoryName, fileName );
         }
+        if( modified )
+        {
+            fileName += "/Modified";
+        }
+
         // Make the filename.  It will have the form:
         //   CLI_<program number>_<program hash>_<compile count>_<options hash>
         // Leave off the extension for now.
@@ -5078,6 +5106,12 @@ void CLIntercept::dumpProgramOptions(
             fileName += "/CLI_";
             fileName += numberString;
         }
+
+        // Now make directories as appropriate.
+        {
+            OS().MakeDumpDirectories( fileName );
+        }
+
         // Dump the program options to a .txt file.
         {
             fileName +=
@@ -5211,10 +5245,23 @@ void CLIntercept::dumpProgramBuildLog(
 ///////////////////////////////////////////////////////////////////////////////
 //
 void CLIntercept::getTimingTagBlocking(
+    const char* functionName,
     const cl_bool blocking,
+    const size_t size,
     std::string& hostTag,
-    std::string& hostArg )
+    std::string& hostArg,
+    std::string& deviceTag )
 {
+    deviceTag.reserve(128);
+    deviceTag = functionName;
+
+    if( size && config().DevicePerformanceTimeTransferTracking )
+    {
+        char    s[256];
+        CLI_SPRINTF( s, 256, "( %zu bytes )", size );
+        deviceTag += s;
+    }
+
     if( blocking == CL_TRUE )
     {
         hostTag += "blocking";
@@ -5228,6 +5275,7 @@ void CLIntercept::getTimingTagsMap(
     const char* functionName,
     const cl_map_flags flags,
     const cl_bool blocking,
+    const size_t size,
     std::string& hostTag,
     std::string& hostArg,
     std::string& deviceTag,
@@ -5259,6 +5307,12 @@ void CLIntercept::getTimingTagsMap(
     deviceTag = functionName;
     deviceTag += "( ";
     deviceTag += hostTag;
+    if( size && config().DevicePerformanceTimeTransferTracking )
+    {
+        char    s[256];
+        CLI_SPRINTF( s, 256, "; %zu bytes", size );
+        deviceTag += s;
+    }
     deviceTag += " )";
 
     deivceArg.reserve(128);
@@ -5266,15 +5320,65 @@ void CLIntercept::getTimingTagsMap(
 
     if( blocking == CL_TRUE )
     {
-        if( !hostTag.empty() )
-        {
-            hostTag += ", ";
-            hostArg += ",";
-        }
-        hostTag += "blocking";
+        hostTag += "; blocking";
         hostArg += "\"\"MODE\"\":\"\"blocking\"\"";
     }
     if ( !hostArg.empty() ) hostArg += "}\"";
+}
+
+///////////////////////////////////////////////////////////////////////////////
+//
+void CLIntercept::getTimingTagsUnmap(
+    const char* functionName,
+    const void* ptr,
+    std::string& hostTag,
+    std::string& hostArg,
+    std::string& deviceTag,
+    std::string& deviceArg )
+{
+    if( ptr )
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+
+        CMapPointerInfoMap::iterator iter = m_MapPointerInfoMap.find( ptr );
+        if( iter != m_MapPointerInfoMap.end() )
+        {
+            const cl_map_flags flags = iter->second.Flags;
+            const size_t size = iter->second.Size;
+
+            if( flags & CL_MAP_WRITE_INVALIDATE_REGION )
+            {
+                hostTag += "WI";
+            }
+            else if( flags & CL_MAP_WRITE )
+            {
+                hostTag += "RW";
+            }
+            else if( flags & CL_MAP_READ )
+            {
+                hostTag += "R";
+            }
+
+            if( flags & ~(CL_MAP_READ | CL_MAP_WRITE | CL_MAP_WRITE_INVALIDATE_REGION) )
+            {
+                hostTag += "?";
+            }
+
+            if ( !hostTag.empty() ) hostArg += "\"{\"\"FLAG\"\":\"\"" + hostTag + "\"\"}\"";
+
+            deviceTag.reserve(128);
+            deviceTag = functionName;
+            deviceTag += "( ";
+            deviceTag += hostTag;
+            if( size && config().DevicePerformanceTimeTransferTracking )
+            {
+                char    s[256];
+                CLI_SPRINTF( s, 256, "; %zu bytes", size );
+                deviceTag += s;
+            }
+            deviceTag += " )";
+        }
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -5283,6 +5387,7 @@ void CLIntercept::getTimingTagsMemfill(
     const char* functionName,
     const cl_command_queue queue,
     const void* dst,
+    const size_t size,
     std::string& hostTag,
     std::string& hostArg,
     std::string& deviceTag,
@@ -5338,6 +5443,12 @@ void CLIntercept::getTimingTagsMemfill(
             deviceTag = functionName;
             deviceTag += "( ";
             deviceTag += hostTag;
+            if( size && config().DevicePerformanceTimeTransferTracking )
+            {
+                char    s[256];
+                CLI_SPRINTF( s, 256, "; %zu bytes", size );
+                deviceTag += s;
+            }
             deviceTag += " )";
 
             deivceArg.reserve(128);
@@ -5354,6 +5465,7 @@ void CLIntercept::getTimingTagsMemcpy(
     const cl_bool blocking,
     const void* dst,
     const void* src,
+    const size_t size,
     std::string& hostTag,
     std::string& hostArg,
     std::string& deviceTag,
@@ -5424,6 +5536,12 @@ void CLIntercept::getTimingTagsMemcpy(
             deviceTag = functionName;
             deviceTag += "( ";
             deviceTag += hostTag;
+            if( size && config().DevicePerformanceTimeTransferTracking )
+            {
+                char    s[256];
+                CLI_SPRINTF( s, 256, "; %zu bytes", size );
+                deviceTag += s;
+            }
             deviceTag += " )";
 
             deviceArg.reserve(128);
@@ -5433,12 +5551,7 @@ void CLIntercept::getTimingTagsMemcpy(
 
     if( blocking == CL_TRUE )
     {
-        if( !hostTag.empty() )
-        {
-            hostTag += ", ";
-            hostArg += ",";
-        }
-        hostTag += "blocking";
+        hostTag += "; blocking";
         hostArg += "\"\"MODE\"\":\"\"blocking\"\"";
     }
     if ( !hostArg.empty() ) hostArg += "}\"";
@@ -6574,8 +6687,11 @@ void CLIntercept::addKernelInfo(
     const SProgramInfo& programInfo = m_ProgramInfoMap[ program ];
 
     SKernelInfo& kernelInfo = m_KernelInfoMap[ kernel ];
+    std::string demangledName = config().DemangleKernelNames ?
+        demangle(kernelName) :
+        kernelName;
 
-    kernelInfo.KernelName = kernelName;
+    kernelInfo.KernelName = demangledName;
 
     kernelInfo.ProgramHash = programInfo.ProgramHash;
     kernelInfo.OptionsHash = programInfo.OptionsHash;
@@ -6583,7 +6699,7 @@ void CLIntercept::addKernelInfo(
     kernelInfo.ProgramNumber = programInfo.ProgramNumber;
     kernelInfo.CompileCount = programInfo.CompileCount - 1;
 
-    addShortKernelName( kernelName );
+    addShortKernelName( demangledName );
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -6626,8 +6742,11 @@ void CLIntercept::addKernelInfo(
                     kernelName[ kernelNameSize ] = 0;
 
                     SKernelInfo& kernelInfo = m_KernelInfoMap[ kernel ];
+                    std::string demangledName = config().DemangleKernelNames ?
+                        demangle(kernelName) :
+                        kernelName;
 
-                    kernelInfo.KernelName = kernelName;
+                    kernelInfo.KernelName = demangledName;
 
                     kernelInfo.ProgramHash = programInfo.ProgramHash;
                     kernelInfo.OptionsHash = programInfo.OptionsHash;
@@ -6635,7 +6754,7 @@ void CLIntercept::addKernelInfo(
                     kernelInfo.ProgramNumber = programInfo.ProgramNumber;
                     kernelInfo.CompileCount = programInfo.CompileCount - 1;
 
-                    addShortKernelName( kernelName );
+                    addShortKernelName( demangledName );
                 }
 
                 delete [] kernelName;
@@ -6824,8 +6943,36 @@ void CLIntercept::checkRemoveCommandBufferInfo(
             if( errorCode == CL_SUCCESS && refCount == 1 )
             {
                 m_CommandBufferInfoMap.erase( iter );
+
+                CCommandBufferMutableCommandsMap::iterator cmditer =
+                    m_CommandBufferMutableCommandsMap.find( cmdbuf );
+                if( cmditer != m_CommandBufferMutableCommandsMap.end() )
+                {
+                    CMutableCommandList&    cmdList = cmditer->second;
+                    for( auto cmd : cmdList )
+                    {
+                        m_MutableCommandInfoMap.erase(cmd);
+                    }
+
+                    m_CommandBufferMutableCommandsMap.erase(cmditer);
+                }
             }
         }
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+//
+void CLIntercept::addMutableCommandInfo(
+    cl_mutable_command_khr cmd,
+    cl_command_buffer_khr cmdbuf )
+{
+    if( cmd && cmdbuf )
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+
+        m_MutableCommandInfoMap[cmd] = getPlatform(cmdbuf);
+        m_CommandBufferMutableCommandsMap[cmdbuf].push_back(cmd);
     }
 }
 
@@ -7805,6 +7952,43 @@ void CLIntercept::dumpBuffer(
                     NULL );
             }
         }
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+//
+void CLIntercept::addMapPointer(
+    const void* ptr,
+    const cl_map_flags flags,
+    const size_t size )
+{
+    if( ptr )
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+
+        if( m_MapPointerInfoMap.find(ptr) != m_MapPointerInfoMap.end() )
+        {
+            log( "Ignoring duplicate mapped pointer.\n" );
+        }
+        else
+        {
+            SMapPointerInfo&    mapPointerInfo = m_MapPointerInfoMap[ptr];
+
+            mapPointerInfo.Flags = flags;
+            mapPointerInfo.Size = size;
+        }
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+//
+void CLIntercept::removeMapPointer(
+    const void* ptr )
+{
+    if( ptr )
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        m_MapPointerInfoMap.erase(ptr);
     }
 }
 
@@ -12191,7 +12375,7 @@ void* CLIntercept::getExtensionFunctionAddress(
     // don't need to look it up per-platform.
     CHECK_RETURN_ICD_LOADER_EXTENSION_FUNCTION( clGetGLContextInfoKHR );
 
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || defined(__FreeBSD__)
     CHECK_RETURN_ICD_LOADER_EXTENSION_FUNCTION( clCreateFromGLBuffer );
     CHECK_RETURN_ICD_LOADER_EXTENSION_FUNCTION( clCreateFromGLTexture );
     CHECK_RETURN_ICD_LOADER_EXTENSION_FUNCTION( clCreateFromGLTexture2D );
@@ -12243,6 +12427,10 @@ void* CLIntercept::getExtensionFunctionAddress(
     CHECK_RETURN_EXTENSION_FUNCTION( clCommandFillImageKHR );
     CHECK_RETURN_EXTENSION_FUNCTION( clCommandNDRangeKernelKHR );
     CHECK_RETURN_EXTENSION_FUNCTION( clGetCommandBufferInfoKHR );
+
+    // cl_khr_command_buffer_mutable_dispatch
+    CHECK_RETURN_EXTENSION_FUNCTION( clUpdateMutableCommandsKHR );
+    CHECK_RETURN_EXTENSION_FUNCTION( clGetMutableCommandInfoKHR );
 
     // cl_khr_create_command_queue
     CHECK_RETURN_EXTENSION_FUNCTION( clCreateCommandQueueWithPropertiesKHR );
@@ -12374,7 +12562,10 @@ void CLIntercept::log( const std::string& s )
         if( m_Config.LogToFile )
         {
             m_InterceptLog << logString;
-            m_InterceptLog.flush();
+            if( m_Config.FlushFiles )
+            {
+                m_InterceptLog.flush();
+            }
         }
         if( m_Config.LogToDebugger )
         {
@@ -12552,7 +12743,7 @@ void CLIntercept::logDeviceInfo( cl_device_id device )
 
 ///////////////////////////////////////////////////////////////////////////////
 //
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || defined(__FreeBSD__)
 #define INIT_EXPORTED_FUNC(funcname)                                        \
 {                                                                           \
     void* func = OS().GetFunctionPointer(m_OpenCLLibraryHandle, #funcname); \
@@ -12657,7 +12848,7 @@ bool CLIntercept::initDispatch( const std::string& libName )
         // The entry points for this extension are exported from the ICD
         // loader even though they are extension APIs.
         INIT_EXPORTED_FUNC( clGetGLContextInfoKHR );
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || defined(__FreeBSD__)
         INIT_EXPORTED_FUNC( clCreateFromGLBuffer );
         INIT_EXPORTED_FUNC( clCreateFromGLTexture );
         INIT_EXPORTED_FUNC( clCreateFromGLTexture2D );
@@ -13248,6 +13439,11 @@ void CLIntercept::chromeCallLoggingExit(
             usStart,
             usDelta );
         m_InterceptChromeTrace.write(m_StringBuffer, size);
+    }
+
+    if( m_Config.FlushFiles )
+    {
+        m_InterceptChromeTrace.flush();
     }
 }
 

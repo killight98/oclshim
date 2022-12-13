@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: MIT
 
+include(CheckIncludeFileCXX)
+
 set(CLINTERCEPT_CL_HEADERS
     CL/cl.h
     CL/cl_gl.h
@@ -24,6 +26,7 @@ if(WIN32)
         OS/OS_windows_common.h
     )
 elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux" OR
+       ${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD" OR
        ${CMAKE_SYSTEM_NAME} STREQUAL "Android")
     list(APPEND CLINTERCEPT_OS_FILES
         OS/OS_linux.cpp
@@ -61,6 +64,7 @@ set(CLINTERCEPT_SOURCE_FILES
     src/cliprof_init.cpp
     src/common.h
     src/controls.h
+    src/demangle.h
     src/dispatch.cpp
     src/dispatch.h
     src/emulate.cpp
@@ -169,17 +173,25 @@ if(ENABLE_MDAPI)
     )
 endif()
 
+# Demangling Support (optional)
+CHECK_INCLUDE_FILE_CXX(cxxabi.h HAS_CXXABI)
+if(HAS_CXXABI)
+    target_compile_definitions(OpenCL PRIVATE USE_DEMANGLE)
+endif()
+
 if(WIN32)
     target_compile_options(OpenCL PRIVATE /EHsc)
     target_link_libraries(OpenCL SetupAPI Shlwapi)
 elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
     target_compile_options(OpenCL PRIVATE -Wall)
-    # TODO: Move this to target_link_libraries?
     set_target_properties(OpenCL PROPERTIES LINK_FLAGS "-Wl,--version-script -Wl,${CMAKE_CURRENT_SOURCE_DIR}/src/clIntercept.map")
     target_link_libraries(OpenCL ${CMAKE_THREAD_LIBS_INIT})
+elseif(${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
+    target_compile_options(OpenCL PRIVATE -Wall)
+    set_target_properties(OpenCL PROPERTIES LINK_FLAGS "-Wl,--version-script -Wl,${CMAKE_CURRENT_SOURCE_DIR}/src/clIntercept.map")
+    target_link_libraries(OpenCL ${CMAKE_THREAD_LIBS_INIT} procstat util)
 elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
     target_compile_options(OpenCL PRIVATE -Wall)
-    # TODO: Move this to target_link_libraries?
     set_target_properties(OpenCL PROPERTIES LINK_FLAGS "-Wl,--version-script -Wl,${CMAKE_CURRENT_SOURCE_DIR}/src/clIntercept.map")
     target_link_libraries(OpenCL ${CMAKE_THREAD_LIBS_INIT} log)
 elseif(APPLE)
