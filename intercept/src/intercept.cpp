@@ -5309,7 +5309,7 @@ void CLIntercept::getTimingTagsMap(
         hostTag += "?";
     }
 
-    if ( !hostTag.empty() ) hostArg += "\"{\"\"FLAG\"\":\"\"" + hostTag + "\"\"";
+    if ( !hostTag.empty() ) hostArg += "\"\"FLAG\"\":\"\"" + hostTag + "\"\"";
 
     deviceTag.reserve(128);
     deviceTag = functionName;
@@ -5329,9 +5329,9 @@ void CLIntercept::getTimingTagsMap(
     if( blocking == CL_TRUE )
     {
         hostTag += "; blocking";
-        hostArg += "\"\"MODE\"\":\"\"blocking\"\"";
+        hostArg += !hostArg.empty() ? ",\"\"MODE\"\":\"\"blocking\"\"" : "\"\"MODE\"\":\"\"blocking\"\"";
     }
-    if ( !hostArg.empty() ) hostArg += "}\"";
+    if ( !hostArg.empty() ) hostArg = "\"{" + hostArg + "}\"";
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -5538,7 +5538,7 @@ void CLIntercept::getTimingTagsMemcpy(
             default:                        hostTag += "M"; break;
             }
 
-            hostArg = "\"{\"\"CopyType\"\":\"\"" + hostTag + "\"\"";
+            hostArg = "\"\"CopyType\"\":\"\"" + hostTag + "\"\"";
 
             deviceTag.reserve(128);
             deviceTag = functionName;
@@ -5560,9 +5560,9 @@ void CLIntercept::getTimingTagsMemcpy(
     if( blocking == CL_TRUE )
     {
         hostTag += "; blocking";
-        hostArg += "\"\"MODE\"\":\"\"blocking\"\"";
+        hostArg += !hostArg.empty() ? ",\"\"MODE\"\":\"\"blocking\"\"" : "\"\"MODE\"\":\"\"blocking\"\"";
     }
-    if ( !hostArg.empty() ) hostArg += "}\"";
+    if ( !hostArg.empty() ) hostArg =  "\"{" + hostArg + "}\"";
 }
 
 ///////////////////////////////////////////////////////////////////////////////
