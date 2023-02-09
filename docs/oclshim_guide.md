@@ -1,4 +1,4 @@
-# How to Build and Run for OpenCL Applications
+# How to Build and Run oclshim for OpenCL Applications
 
 This document describes how to build `libOpenCL.so` (dynamic shared file) and `cliloader`(oclshim tool), also provide some commands for using them.
 
@@ -7,20 +7,20 @@ This document describes how to build `libOpenCL.so` (dynamic shared file) and `c
 - Cmake
 - C++ Compiler
 
-## Build Command
+## Build
 
 ```sh
 mkdir build && cd build
-cmake .. -DENABLE_HIGH_RESOLUTION_CLOCK=TRUE
+# Don't set `-DENABLE_HIGH_RESOLUTION_CLOCK=TRUE` because time baseline uses monotonic time.
+cmake ..
 make -j<N>
 # cmake --build .
 # make install
 ```
-Cmake recommends setting `ENABLE_HIGH_RESOLUTION_CLOCK` TRUE, profiling tool would use the `high_resolution_clock` for collecting timestamps instead of the default `steady_clock`, its default value may lead to collect wrong time information.
 
-## Usage Command
+## Usage
 
-```sh
+```bash
 $ CLI_OpenCLFileName=/path/to/real/libOpenCL.so \
     cliloader -at -ccl -cdt -dv ./<application>
 
