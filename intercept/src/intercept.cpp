@@ -77,7 +77,7 @@ const char* CLIntercept::sc_CsvTraceFileName = "oclshim_%" PRIu64 ".csv";
 // "category" destinguishs device or host api call
 // "info" describes host/kernel function details, which is json format
 // "correlationId" shows relationship between device and host api call
-const char* CLIntercept::sc_CsvHeader = "name,startTime(us),duration(us),deviceId,threadId,category,info,correlationId\n";
+const char* CLIntercept::sc_CsvHeader = "name,startTime(us),duration(us),deviceId,threadId,queueNum,category,info,correlationId\n";
 ///////////////////////////////////////////////////////////////////////////////
 //
 bool CLIntercept::Create( void* pGlobalData, CLIntercept*& pIntercept )
@@ -1305,7 +1305,7 @@ void CLIntercept::cacheDeviceInfo(
         if ( m_Config.CsvPerformanceTracing )
         {
             m_InterceptCsvTrace << "\"device\",,," << std::to_string(deviceInfo.DeviceIndex)
-                                << ",," << std::to_string(CLIntercept::API_CATEGORY::DEVICE_INFO)
+                                << ",,," << std::to_string(CLIntercept::API_CATEGORY::DEVICE_INFO)
                                 << ",\"" << deviceInfo.Name << "\",\n";
         }
         delete [] deviceName;
@@ -13752,7 +13752,7 @@ void CLIntercept::csvTraceEvent(
 
     m_InterceptCsvTrace
         << name << "," << usStart + startTimeUS << "," << usDur << ","
-        << std::to_string(deviceId) << "," << threadId << ","
+        << std::to_string(deviceId) << "," << threadId << "," << queueNumber << ","
         << std::to_string(CLIntercept::API_CATEGORY::DEVICE) << "," << arg
         << "," << correlationId << "\n";
 }
@@ -13783,7 +13783,7 @@ void CLIntercept::csvCallLoggingExit(
 
     m_InterceptCsvTrace
         << name << "," << startTime << "," << endTime - startTime << ",,"
-        << threadId << "," << std::to_string(CLIntercept::API_CATEGORY::HOST)
+        << threadId << ",," << std::to_string(CLIntercept::API_CATEGORY::HOST)
         << "," << arg << "," << correlationId << "\n";
 }
 
