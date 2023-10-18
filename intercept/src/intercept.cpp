@@ -124,6 +124,7 @@ CLIntercept::CLIntercept( void* pGlobalData )
     m_EventsChromeTraced = 0;
     m_ProgramNumber = 0;
     m_KernelID = 0;
+    m_GlobalDeviceIndex = 0;
 
 #if defined(USE_MDAPI)
     m_pMDHelper = NULL;
@@ -436,7 +437,6 @@ bool CLIntercept::init()
             fileName.c_str(),
             std::ios::out | std::ios::binary );
         m_InterceptCsvTrace << "hostname:" << m_OS.GetHostName() << ",cpu:" << m_OS.GetCpuInfo() << "\n";
-        m_InterceptCsvTrace << sc_CsvHeader;
     }
 
     std::string name = "";
@@ -612,6 +612,12 @@ bool CLIntercept::init()
         initCustomPerfCounters();
     }
 #endif
+    // get all devices
+    initDeviceList(CL_DEVICE_TYPE_GPU);
+    if ( m_Config.CsvPerformanceTracing )
+    {
+        m_InterceptCsvTrace << sc_CsvHeader;
+    }
 
     m_StartTime = clock::now();
     log( "Timer Started!\n" );
@@ -1202,7 +1208,8 @@ void CLIntercept::callLoggingExit(
 ///////////////////////////////////////////////////////////////////////////////
 //
 void CLIntercept::cacheDeviceInfo(
-    cl_device_id device )
+    cl_device_id device,
+    const cl_int platformIndex )
 {
     if( device && m_DeviceInfoMap.find(device) == m_DeviceInfoMap.end() )
     {
@@ -1218,10 +1225,8 @@ void CLIntercept::cacheDeviceInfo(
         else
         {
             deviceInfo.ParentDevice = NULL;
-            getDeviceIndex(
-                device,
-                deviceInfo.PlatformIndex,
-                deviceInfo.DeviceIndex );
+            deviceInfo.PlatformIndex = platformIndex;
+            deviceInfo.DeviceIndex = m_GlobalDeviceIndex.fetch_add(1);
         }
 
         char*   deviceName = NULL;
@@ -1304,9 +1309,8 @@ void CLIntercept::cacheDeviceInfo(
         // Save device info into csv file
         if ( m_Config.CsvPerformanceTracing )
         {
-            m_InterceptCsvTrace << "\"device\",,," << std::to_string(deviceInfo.DeviceIndex)
-                                << ",,," << std::to_string(CLIntercept::API_CATEGORY::DEVICE_INFO)
-                                << ",\"" << deviceInfo.Name << "\",\n";
+            m_InterceptCsvTrace << "deviceId:" << std::to_string(deviceInfo.DeviceIndex)
+                                << ",deviceInfo:" << deviceInfo.Name << "\n";
         }
         delete [] deviceName;
     }
@@ -1318,13 +1322,13 @@ void CLIntercept::getDeviceIndexString(
     cl_device_id device,
     std::string& str )
 {
-    cacheDeviceInfo( device );
+    // cacheDeviceInfo( device );
     str = std::to_string(m_DeviceInfoMap[device].DeviceIndex);
 
     while( m_DeviceInfoMap[device].ParentDevice != NULL )
     {
         device = m_DeviceInfoMap[device].ParentDevice;
-        cacheDeviceInfo( device );
+        // cacheDeviceInfo( device );
         str = std::to_string(m_DeviceInfoMap[device].DeviceIndex) + '.' + str;
     }
 
@@ -1526,6 +1530,40 @@ bool CLIntercept::checkDeviceForExtension(
     }
 
     return supported;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+//
+void CLIntercept::initDeviceList(
+    cl_device_type type)
+{
+    cl_int status = CL_SUCCESS;
+    cl_uint platform_count = 0;
+    status = dispatch().clGetPlatformIDs(0, nullptr, &platform_count);
+    if ( status != CL_SUCCESS || platform_count == 0 ) {
+        return;
+    }
+
+    std::vector<cl_platform_id> platform_list(platform_count, nullptr);
+    status = dispatch().clGetPlatformIDs(platform_count, platform_list.data(), nullptr);
+    if ( status == CL_SUCCESS ) {
+        for (cl_uint i = 0; i < platform_count; ++i) {
+            cl_uint device_count = 0;
+
+            status = dispatch().clGetDeviceIDs(
+                platform_list[i], type, 0, nullptr, &device_count);
+            if ( status != CL_SUCCESS || device_count == 0 ) continue;
+
+            std::vector<cl_device_id> device_list(device_count, nullptr);
+            status = dispatch().clGetDeviceIDs(
+                platform_list[i], type, device_count, device_list.data(), nullptr);
+            if ( status == CL_SUCCESS ) {
+                for (cl_uint j = 0; j < device_count; ++j) {
+                    cacheDeviceInfo(device_list[j], i);
+                }
+            }
+        }
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -5591,7 +5629,7 @@ void CLIntercept::getTimingTagsKernel(
 
     // Cache the device info if it's not cached already, since we'll print
     // the device name and other device properties as part of the report.
-    cacheDeviceInfo( device );
+    // cacheDeviceInfo( device );
 
     if( kernel )
     {
@@ -6249,7 +6287,7 @@ void CLIntercept::addTimingEvent(
 
     // Cache the device info if it's not cached already, since we'll print
     // the device name and other device properties as part of the report.
-    cacheDeviceInfo( device );
+    // cacheDeviceInfo( device );
 
     dispatch().clRetainEvent( event );
 
@@ -6593,7 +6631,7 @@ cl_command_queue CLIntercept::createCommandQueueWithProperties(
     cl_command_queue    retVal = NULL;
 
     // Cache the device info if it's not cached already.
-    cacheDeviceInfo( device );
+    // cacheDeviceInfo( device );
 
     const SDeviceInfo& deviceInfo = m_DeviceInfoMap[device];
 
@@ -13502,7 +13540,7 @@ void CLIntercept::chromeRegisterCommandQueue(
             trackName += "IOQ";
         }
 
-        cacheDeviceInfo( device );
+        // cacheDeviceInfo( device );
 
         const SDeviceInfo& deviceInfo = m_DeviceInfoMap[device];
 

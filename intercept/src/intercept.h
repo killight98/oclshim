@@ -91,7 +91,8 @@ public:
                 ... );
 
     void    cacheDeviceInfo(
-                cl_device_id device );
+                cl_device_id device,
+                const cl_int platformIndex);
     void    getDeviceIndexString(
                 cl_device_id device,
                 std::string& str );
@@ -134,6 +135,9 @@ public:
                 size_t& kernelISABinarySize,
                 char*& kernelISABinary ) const;
 
+    void    initDeviceList(
+                cl_device_type type
+            );
     void    getPlatformInfoString(
                 cl_platform_id platform,
                 std::string& str ) const;
@@ -1111,6 +1115,7 @@ private:
 
     typedef std::map< cl_device_id, SDeviceInfo >   CDeviceInfoMap;
     CDeviceInfoMap  m_DeviceInfoMap;
+    std::atomic<u_int16_t> m_GlobalDeviceIndex;
 
     // These structures define a mapping between a key and a device
     // timing record.  The key consists of a device ID and a string
