@@ -1212,8 +1212,12 @@ void CLIntercept::cacheDeviceInfo(
         if( iter != m_SubDeviceInfoMap.end() )
         {
             deviceInfo.ParentDevice = iter->second.ParentDevice;
-            deviceInfo.PlatformIndex = 0;
-            deviceInfo.DeviceIndex = iter->second.SubDeviceIndex;
+            getDeviceIndex(
+                deviceInfo.ParentDevice,
+                deviceInfo.PlatformIndex,
+                deviceInfo.DeviceIndex );
+            deviceInfo.SubDeviceIndex = iter->second.SubDeviceIndex;
+            deviceInfo.DeviceId = std::to_string(deviceInfo.DeviceIndex) + "." + std::to_string(deviceInfo.SubDeviceIndex);
         }
         else
         {
@@ -1222,6 +1226,8 @@ void CLIntercept::cacheDeviceInfo(
                 device,
                 deviceInfo.PlatformIndex,
                 deviceInfo.DeviceIndex );
+            deviceInfo.SubDeviceIndex = 0;
+            deviceInfo.DeviceId = std::to_string(deviceInfo.DeviceIndex);
         }
 
         char*   deviceName = NULL;
@@ -1304,8 +1310,8 @@ void CLIntercept::cacheDeviceInfo(
         // Save device info into csv file
         if ( m_Config.CsvPerformanceTracing )
         {
-            m_InterceptCsvTrace << "\"device\",,," << std::to_string(deviceInfo.DeviceIndex)
-                                << ",,," << std::to_string(CLIntercept::API_CATEGORY::DEVICE_INFO)
+            m_InterceptCsvTrace << "\"device\",,,\"" << deviceInfo.DeviceId
+                                << "\",,," << std::to_string(CLIntercept::API_CATEGORY::DEVICE_INFO)
                                 << ",\"" << deviceInfo.Name << "\",\n";
         }
         delete [] deviceName;
@@ -6466,7 +6472,7 @@ void CLIntercept::checkTimingEvents()
                             csvTraceEvent(
                                 node.TraceName,
                                 node.Arg,
-                                deviceInfo.DeviceIndex,
+                                deviceInfo.DeviceId,
                                 useProfilingDelta,
                                 node.ProfilingDeltaNS,
                                 node.EnqueueCounter,
@@ -13712,7 +13718,7 @@ void CLIntercept::chromeTraceEvent(
 void CLIntercept::csvTraceEvent(
     const std::string& name,
     const std::string& arg,
-    const uint32_t deviceId,
+    const std::string& deviceId,
     bool useProfilingDelta,
     int64_t profilingDeltaNS,
     uint64_t enqueueCounter,
@@ -13751,8 +13757,8 @@ void CLIntercept::csvTraceEvent(
         std::chrono::duration_cast<us>(m_StartTime.time_since_epoch()).count();
 
     m_InterceptCsvTrace
-        << name << "," << usStart + startTimeUS << "," << usDur << ","
-        << std::to_string(deviceId) << "," << threadId << "," << queueNumber << ","
+        << name << "," << usStart + startTimeUS << "," << usDur << ",\""
+        << deviceId << "\"," << threadId << "," << queueNumber << ","
         << std::to_string(CLIntercept::API_CATEGORY::DEVICE) << "," << arg
         << "," << correlationId << "\n";
 }

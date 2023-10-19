@@ -896,7 +896,7 @@ public:
     void    csvTraceEvent(
                 const std::string& name,
                 const std::string& arg,
-                const uint32_t deviceId,
+                const std::string& deviceId,
                 bool useProfilingDelta,
                 int64_t profilingDeltaNS,
                 uint64_t enqueueCounter,
@@ -1091,11 +1091,13 @@ private:
         cl_device_id    ParentDevice;   // null for root devices
         cl_uint     PlatformIndex;      // zero for sub-devices
         cl_uint     DeviceIndex;
+        cl_uint     SubDeviceIndex;
 
         cl_device_type  Type;
 
         std::string Name;
         std::string NameForReport;
+        std::string DeviceId;
 
         cl_uint     NumericVersion;
 
