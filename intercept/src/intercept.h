@@ -91,7 +91,10 @@ public:
                 ... );
 
     void    cacheDeviceInfo(
-                cl_device_id device );
+                cl_device_id device,
+                const cl_int platformIndex,
+                const cl_int deviceIndex,
+                const bool dump);
     void    getDeviceIndexString(
                 cl_device_id device,
                 std::string& str );
@@ -134,6 +137,10 @@ public:
                 size_t& kernelISABinarySize,
                 char*& kernelISABinary ) const;
 
+    void    initDeviceList(
+                cl_device_type type
+            );
+    inline std::vector<cl_device_id> GetSubDeviceList(cl_device_id device);
     void    getPlatformInfoString(
                 cl_platform_id platform,
                 std::string& str ) const;
@@ -896,7 +903,7 @@ public:
     void    csvTraceEvent(
                 const std::string& name,
                 const std::string& arg,
-                const std::string& deviceId,
+                const cl_uint& deviceId,
                 bool useProfilingDelta,
                 int64_t profilingDeltaNS,
                 uint64_t enqueueCounter,
@@ -1092,12 +1099,12 @@ private:
         cl_uint     PlatformIndex;      // zero for sub-devices
         cl_uint     DeviceIndex;
         cl_uint     SubDeviceIndex;
+        cl_uint     DeviceId;
 
         cl_device_type  Type;
 
         std::string Name;
         std::string NameForReport;
-        std::string DeviceId;
 
         cl_uint     NumericVersion;
 
