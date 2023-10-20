@@ -295,7 +295,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clCreateSubDevices)(
             }
         }
         CALL_LOGGING_EXIT( retVal );
-
+        /*
         if( retVal == CL_SUCCESS &&
             out_devices &&
             num_devices_ret )
@@ -305,6 +305,7 @@ CL_API_ENTRY cl_int CL_API_CALL CLIRN(clCreateSubDevices)(
                 out_devices,
                 num_devices_ret[0] );
         }
+        */
 
         return retVal;
     }

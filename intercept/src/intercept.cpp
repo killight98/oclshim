@@ -436,7 +436,6 @@ bool CLIntercept::init()
             fileName.c_str(),
             std::ios::out | std::ios::binary );
         m_InterceptCsvTrace << "hostname:" << m_OS.GetHostName() << ",cpu:" << m_OS.GetCpuInfo() << "\n";
-        m_InterceptCsvTrace << sc_CsvHeader;
     }
 
     std::string name = "";
@@ -612,6 +611,12 @@ bool CLIntercept::init()
         initCustomPerfCounters();
     }
 #endif
+    // get all devices
+    initDeviceList(CL_DEVICE_TYPE_GPU);
+    if ( m_Config.CsvPerformanceTracing )
+    {
+        m_InterceptCsvTrace << sc_CsvHeader;
+    }
 
     m_StartTime = clock::now();
     log( "Timer Started!\n" );
@@ -1202,33 +1207,28 @@ void CLIntercept::callLoggingExit(
 ///////////////////////////////////////////////////////////////////////////////
 //
 void CLIntercept::cacheDeviceInfo(
-    cl_device_id device )
+    cl_device_id device,
+    const cl_int platformIndex,
+    const cl_int deviceIndex )
 {
     if( device && m_DeviceInfoMap.find(device) == m_DeviceInfoMap.end() )
     {
         SDeviceInfo&    deviceInfo = m_DeviceInfoMap[device];
+        deviceInfo.DeviceIndex = deviceIndex;
+        deviceInfo.PlatformIndex = platformIndex;
 
         CSubDeviceInfoMap::iterator iter = m_SubDeviceInfoMap.find( device );
         if( iter != m_SubDeviceInfoMap.end() )
         {
             deviceInfo.ParentDevice = iter->second.ParentDevice;
-            getDeviceIndex(
-                deviceInfo.ParentDevice,
-                deviceInfo.PlatformIndex,
-                deviceInfo.DeviceIndex );
             deviceInfo.SubDeviceIndex = iter->second.SubDeviceIndex;
-            deviceInfo.DeviceId = std::to_string(deviceInfo.DeviceIndex) + "." + std::to_string(deviceInfo.SubDeviceIndex);
         }
         else
         {
             deviceInfo.ParentDevice = NULL;
-            getDeviceIndex(
-                device,
-                deviceInfo.PlatformIndex,
-                deviceInfo.DeviceIndex );
             deviceInfo.SubDeviceIndex = 0;
-            deviceInfo.DeviceId = std::to_string(deviceInfo.DeviceIndex);
         }
+        deviceInfo.DeviceId = deviceInfo.DeviceIndex + deviceInfo.SubDeviceIndex;
 
         char*   deviceName = NULL;
         cl_uint deviceComputeUnits = 0;
@@ -1310,9 +1310,13 @@ void CLIntercept::cacheDeviceInfo(
         // Save device info into csv file
         if ( m_Config.CsvPerformanceTracing )
         {
-            m_InterceptCsvTrace << "\"device\",,,\"" << deviceInfo.DeviceId
-                                << "\",,," << std::to_string(CLIntercept::API_CATEGORY::DEVICE_INFO)
-                                << ",\"" << deviceInfo.Name << "\",\n";
+            m_InterceptCsvTrace << "deviceId:" << deviceInfo.DeviceId
+                                << ",deviceInfo:" << deviceInfo.Name << " Platform " << deviceInfo.PlatformIndex;
+            if ( deviceInfo.ParentDevice != NULL )
+            {
+                m_InterceptCsvTrace << " Tile " << deviceInfo.SubDeviceIndex;
+            }
+            m_InterceptCsvTrace << "\n";
         }
         delete [] deviceName;
     }
@@ -1324,13 +1328,13 @@ void CLIntercept::getDeviceIndexString(
     cl_device_id device,
     std::string& str )
 {
-    cacheDeviceInfo( device );
+    // cacheDeviceInfo( device );
     str = std::to_string(m_DeviceInfoMap[device].DeviceIndex);
 
     while( m_DeviceInfoMap[device].ParentDevice != NULL )
     {
         device = m_DeviceInfoMap[device].ParentDevice;
-        cacheDeviceInfo( device );
+        // cacheDeviceInfo( device );
         str = std::to_string(m_DeviceInfoMap[device].DeviceIndex) + '.' + str;
     }
 
@@ -1532,6 +1536,66 @@ bool CLIntercept::checkDeviceForExtension(
     }
 
     return supported;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+//
+void CLIntercept::initDeviceList(
+    cl_device_type type)
+{
+    cl_int status = CL_SUCCESS;
+    cl_uint platformCount = 0;
+    status = dispatch().clGetPlatformIDs(0, nullptr, &platformCount);
+    if ( status != CL_SUCCESS || platformCount == 0 ) {
+        return;
+    }
+
+    std::vector<cl_platform_id> platform_list(platformCount, nullptr);
+    status = dispatch().clGetPlatformIDs(platformCount, platform_list.data(), nullptr);
+    if ( status == CL_SUCCESS ) {
+        cl_uint deviceIndex = 0;
+        for (cl_uint i = 0; i < platformCount; ++i) {
+            cl_uint deviceCount = 0;
+            status = dispatch().clGetDeviceIDs(
+                platform_list[i], type, 0, nullptr, &deviceCount);
+            if ( status != CL_SUCCESS || deviceCount == 0 ) continue;
+
+            std::vector<cl_device_id> device_list(deviceCount, nullptr);
+            status = dispatch().clGetDeviceIDs(
+                platform_list[i], type, deviceCount, device_list.data(), nullptr);
+            if ( status == CL_SUCCESS ) {
+                for (cl_uint j = 0; j < deviceCount; ++j) {
+                    std::vector<cl_device_id> subDeviceList = GetSubDeviceList(device_list[j]);
+                    if (!subDeviceList.empty()) {
+                        addSubDeviceInfo(device_list[j], subDeviceList.data(), subDeviceList.size());
+                    }
+                    cacheDeviceInfo(device_list[j], i, deviceIndex);
+                    deviceIndex += subDeviceList.empty() ? 1 : subDeviceList.size();
+                }
+            }
+        }
+    }
+}
+
+inline std::vector<cl_device_id> CLIntercept::GetSubDeviceList(cl_device_id device)
+{
+    cl_int status = CL_SUCCESS;
+    cl_device_partition_property props[] = {
+        CL_DEVICE_PARTITION_BY_AFFINITY_DOMAIN,
+        CL_DEVICE_AFFINITY_DOMAIN_NEXT_PARTITIONABLE,
+        0};
+
+    cl_uint subDeviceCount = 0;
+    status = dispatch().clCreateSubDevices(device, props, 0, nullptr, &subDeviceCount);
+    if (status == CL_DEVICE_PARTITION_FAILED || subDeviceCount == 0) {
+        return std::vector<cl_device_id>();
+    }
+
+    std::vector<cl_device_id> subDeviceList(subDeviceCount);
+    status = dispatch().clCreateSubDevices(
+        device, props, subDeviceCount, subDeviceList.data(), nullptr);
+
+    return subDeviceList;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -5597,7 +5661,7 @@ void CLIntercept::getTimingTagsKernel(
 
     // Cache the device info if it's not cached already, since we'll print
     // the device name and other device properties as part of the report.
-    cacheDeviceInfo( device );
+    // cacheDeviceInfo( device );
 
     if( kernel )
     {
@@ -6255,7 +6319,7 @@ void CLIntercept::addTimingEvent(
 
     // Cache the device info if it's not cached already, since we'll print
     // the device name and other device properties as part of the report.
-    cacheDeviceInfo( device );
+    // cacheDeviceInfo( device );
 
     dispatch().clRetainEvent( event );
 
@@ -6599,7 +6663,7 @@ cl_command_queue CLIntercept::createCommandQueueWithProperties(
     cl_command_queue    retVal = NULL;
 
     // Cache the device info if it's not cached already.
-    cacheDeviceInfo( device );
+    // cacheDeviceInfo( device );
 
     const SDeviceInfo& deviceInfo = m_DeviceInfoMap[device];
 
@@ -13508,7 +13572,7 @@ void CLIntercept::chromeRegisterCommandQueue(
             trackName += "IOQ";
         }
 
-        cacheDeviceInfo( device );
+        // cacheDeviceInfo( device );
 
         const SDeviceInfo& deviceInfo = m_DeviceInfoMap[device];
 
@@ -13718,7 +13782,7 @@ void CLIntercept::chromeTraceEvent(
 void CLIntercept::csvTraceEvent(
     const std::string& name,
     const std::string& arg,
-    const std::string& deviceId,
+    const cl_uint& deviceId,
     bool useProfilingDelta,
     int64_t profilingDeltaNS,
     uint64_t enqueueCounter,
@@ -13757,8 +13821,8 @@ void CLIntercept::csvTraceEvent(
         std::chrono::duration_cast<us>(m_StartTime.time_since_epoch()).count();
 
     m_InterceptCsvTrace
-        << name << "," << usStart + startTimeUS << "," << usDur << ",\""
-        << deviceId << "\"," << threadId << "," << queueNumber << ","
+        << name << "," << usStart + startTimeUS << "," << usDur << ","
+        << deviceId << "," << threadId << "," << queueNumber << ","
         << std::to_string(CLIntercept::API_CATEGORY::DEVICE) << "," << arg
         << "," << correlationId << "\n";
 }
