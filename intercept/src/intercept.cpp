@@ -1209,7 +1209,8 @@ void CLIntercept::callLoggingExit(
 void CLIntercept::cacheDeviceInfo(
     cl_device_id device,
     const cl_int platformIndex,
-    const cl_int deviceIndex )
+    const cl_int deviceIndex,
+    const bool dump )
 {
     if( device && m_DeviceInfoMap.find(device) == m_DeviceInfoMap.end() )
     {
@@ -1308,7 +1309,7 @@ void CLIntercept::cacheDeviceInfo(
             checkDeviceForExtension( device, "cl_khr_subgroups" );
 
         // Save device info into csv file
-        if ( m_Config.CsvPerformanceTracing )
+        if ( m_Config.CsvPerformanceTracing && dump )
         {
             m_InterceptCsvTrace << "deviceId:" << deviceInfo.DeviceId
                                 << ",deviceInfo:" << deviceInfo.Name << " Platform " << deviceInfo.PlatformIndex;
@@ -1569,7 +1570,10 @@ void CLIntercept::initDeviceList(
                     if (!subDeviceList.empty()) {
                         addSubDeviceInfo(device_list[j], subDeviceList.data(), subDeviceList.size());
                     }
-                    cacheDeviceInfo(device_list[j], i, deviceIndex);
+                    cacheDeviceInfo(device_list[j], i, deviceIndex, subDeviceList.empty());
+                    for ( auto subDevice : subDeviceList ) {
+                        cacheDeviceInfo(subDevice, i, deviceIndex, true);
+                    }
                     deviceIndex += subDeviceList.empty() ? 1 : subDeviceList.size();
                 }
             }
@@ -6713,8 +6717,6 @@ void CLIntercept::addSubDeviceInfo(
     const cl_device_id* devices,
     cl_uint numSubDevices )
 {
-    std::lock_guard<std::mutex> lock(m_Mutex);
-
     while( numSubDevices-- )
     {
         cl_device_id    device = devices[ numSubDevices ];

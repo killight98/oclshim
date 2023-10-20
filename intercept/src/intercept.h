@@ -93,7 +93,8 @@ public:
     void    cacheDeviceInfo(
                 cl_device_id device,
                 const cl_int platformIndex,
-                const cl_int deviceIndex);
+                const cl_int deviceIndex,
+                const bool dump);
     void    getDeviceIndexString(
                 cl_device_id device,
                 std::string& str );
